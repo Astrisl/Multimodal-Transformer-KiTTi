@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+kitti_root/training/
+kitti_root/testing/
+*.bin
+*.png
+*.txt
+.vscode/
