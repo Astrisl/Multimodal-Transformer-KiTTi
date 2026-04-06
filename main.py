@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import os
+import matplotlib.pyplot as plt
 
 def point_cloud_to_bev(points, res=0.1, side_range=(-20, 20), fwd_range=(0, 40)):
     """
@@ -113,20 +114,138 @@ def get_calib_matrices(calib_path):
     
     return P2, R0, V2C
 
+def load_calib(calib_path):
+    """Parses KITTI calibration file."""
+    with open(calib_path, 'r') as f:
+        lines = f.readlines()
+    P2 = np.array([float(x) for x in lines[2].split()[1:]]).reshape(3, 4)
+    R0 = np.array([float(x) for x in lines[4].split()[1:]]).reshape(3, 3)
+    V2C = np.array([float(x) for x in lines[5].split()[1:]]).reshape(3, 4)
+    return P2, R0, V2C
+
+def project_lidar_to_image(img, points, P2, R0, V2C):
+    """Projects 3D LiDAR points onto 2D image plane."""
+    # 1. Filter points that are behind the camera (x < 0)
+    points = points[points[:, 0] > 0]
+    
+    # 2. Convert to homogeneous coordinates [x, y, z, 1]
+    pts_3d = np.hstack((points[:, :3], np.ones((points.shape[0], 1))))
+    
+    # 3. Transform: LiDAR -> Camera Gray -> Camera Rectified
+    # Formula: P2 * R0_rect * Tr_velo_to_cam * P_velo
+    R0_homo = np.eye(4)
+    R0_homo[:3, :3] = R0
+    V2C_homo = np.vstack((V2C, [0, 0, 0, 1]))
+    
+    # Combined transformation matrix
+    pts_2d = pts_3d @ V2C_homo.T @ R0_homo.T @ P2.T
+    
+    # 4. Project to 2D (divide by depth Z)
+    depths = pts_2d[:, 2]
+    pts_2d[:, 0] /= depths
+    pts_2d[:, 1] /= depths
+    
+    # 5. Filter points within image boundaries
+    img_h, img_w, _ = img.shape
+    mask = (pts_2d[:, 0] >= 0) & (pts_2d[:, 0] < img_w) & \
+           (pts_2d[:, 1] >= 0) & (pts_2d[:, 1] < img_h)
+    
+    return pts_2d[mask, :2], depths[mask]
+
+
+def project_3d_box_to_2d(obj, P2, R0, V2C):
+    """
+    Projects 3D bounding box corners to 2D image plane.
+    """
+    # 1. Get 3D corners in camera coordinates
+    h, w, l = obj['dimensions']
+    tx, ty, tz = obj['location']
+    ry = obj['rotation_y']
+    
+    # Rotation matrix (around Y axis)
+    R = np.array([[np.cos(ry), 0, np.sin(ry)],
+                  [0, 1, 0],
+                  [-np.sin(ry), 0, np.cos(ry)]])
+    
+    # Define 8 corners of the box
+    x_corners = [l/2, l/2, -l/2, -l/2, l/2, l/2, -l/2, -l/2]
+    y_corners = [0, 0, 0, 0, -h, -h, -h, -h]
+    z_corners = [w/2, -w/2, -w/2, w/2, w/2, -w/2, -w/2, w/2]
+    
+    corners_3d = np.vstack([x_corners, y_corners, z_corners])
+    corners_3d = np.dot(R, corners_3d)
+    corners_3d += np.array([tx, ty, tz]).reshape(3, 1)
+    
+    # 2. Project to 2D using P2 and R0 (since we are already in camera coords)
+    corners_3d_homo = np.vstack((corners_3d, np.ones((1, 8))))
+    pts_2d = np.dot(P2, corners_3d_homo)
+    pts_2d[:2] /= pts_2d[2, :]
+    
+    return pts_2d[:2, :].T.astype(np.int32)
+
+def crop_objects(img, labels, P2, R0, V2C, output_dir="crops"):
+    """
+    Projects 3D boxes to 2D, crops them from the image, and saves to disk.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    for i, obj in enumerate(labels):
+        if obj['type'] == 'DontCare': continue
+        
+        # 1. Project 3D box corners to 2D pixels
+        corners_2d = project_3d_box_to_2d(obj, P2, R0, V2C)
+        
+        # 2. Find the bounding box of the projected corners
+        x_min, y_min = np.min(corners_2d, axis=0)
+        x_max, y_max = np.max(corners_2d, axis=0)
+        
+        # 3. Add some padding and clip to image boundaries
+        padding = 5
+        h, w, _ = img.shape
+        x1, y1 = max(0, x_min - padding), max(0, y_min - padding)
+        x2, y2 = min(w, x_max + padding), min(h, y_max + padding)
+        
+        # 4. Crop and Save
+        if x2 > x1 and y2 > y1:
+            crop = img[y1:y2, x1:x2]
+            file_name = f"{obj['type']}_{i:03d}.png"
+            cv2.imwrite(os.path.join(output_dir, file_name), crop)
+            print(f"Saved: {file_name}")
+
+
+# --- Main Execution ---
+img_path = r"D:\magister\coursa\kitti_root\training\image_2\000000.png"
 bin_path = r"D:\magister\coursa\kitti_root\training\velodyne\000000.bin"
+calib_path = r"D:\magister\coursa\kitti_root\training\calib\000000.txt"
 label_path = r"D:\magister\coursa\kitti_root\training\label_2\000000.txt"
 
-if os.path.exists(bin_path):
+# Check if all necessary files exist
+if all(os.path.exists(p) for p in [img_path, bin_path, calib_path, label_path]):
+    # 1. Load all data
+    img = cv2.imread(img_path)
+    img_display = img.copy() # Copy for visualization so crops remain clean
     scan = np.fromfile(bin_path, dtype=np.float32).reshape(-1, 4)
+    P2, R0, V2C = load_calib(calib_path)
     labels = load_kitti_labels(label_path)
     
-    # Generate base BEV
-    # point_cloud_to_bev is your function from the previous step
-    bev_map = point_cloud_to_bev(scan) 
+    # 2. Project LiDAR points to image for visualization
+    pts_2d, depths = project_lidar_to_image(img_display, scan, P2, R0, V2C)
     
-    # Add boxes
-    final_view = draw_bev_boxes(bev_map, labels)
+    print(f"Projecting {len(pts_2d)} points onto the image...")
+    for i in range(len(pts_2d)):
+        color = plt.get_cmap('jet')(depths[i] / 40.0)[:3]
+        color = tuple([int(c * 255) for c in color[::-1]]) 
+        cv2.circle(img_display, (int(pts_2d[i, 0]), int(pts_2d[i, 1])), 1, color, -1)
     
-    cv2.imshow("BEV Object Detection View", final_view)
+    # 3. RUN THE CROPPER
+    print("Starting to crop objects...")
+    crop_objects(img, labels, P2, R0, V2C, output_dir="crops")
+    print("Done! Check the 'crops' folder in your directory.")
+
+    # 4. Show the visual result
+    cv2.imshow("LiDAR Projective Fusion & Cropping", img_display)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+else:
+    print("Error: One or more files (including labels) are missing!")
