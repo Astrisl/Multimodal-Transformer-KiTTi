@@ -110,12 +110,36 @@ class KittiVisualizer:
         cv2.imshow("Kitti OOP Visualizer", img)
         cv2.waitKey(0)
 
+class KittiFullProcessor(KittiVisualizer):
+    def __init__(self, base_path):
+        self.base_path = base_path
+        self.lidar_dir = os.path.join(base_path, "velodyne")
+        self.sample_ids = [f.split('.')[0] for f in os.listdir(self.lidar_dir) if f.endswith('.bin')]
+        print(f"Found {len(self.sample_ids)} process frame.")
+
+    def run_full_extraction(self, output_dir="dataset_crops"):
+        for s_id in self.sample_ids:
+            try:
+                current_ds = KittiDataset(self.base_path, sample_id=s_id)
+                self.ds = current_ds
+
+                self.auto_crop(output_dir=output_dir)
+                print(f"Refactor frame: {s_id}")
+            except Exception as e:
+                print(f"Error in frame: {s_id}: {e}")
+
+
+
+
 if __name__ == "__main__":
     BASE_PATH = r"D:\magister\coursa\kitti_root\training"
-    
-    dataset = KittiDataset(BASE_PATH, sample_id="000000")
-    
-    vis = KittiVisualizer(dataset)
 
-    vis.auto_crop()
-    vis.show_projection()
+    processor = KittiFullProcessor(BASE_PATH)
+    processor.run_full_extraction(output_dir=r"D:\magister\coursa\full_dataset_crops")
+    
+    # dataset = KittiDataset(BASE_PATH, sample_id="000005")
+    
+    # vis = KittiVisualizer(dataset)
+
+    # vis.auto_crop()
+    # vis.show_projection()
