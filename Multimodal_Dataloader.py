@@ -7,17 +7,28 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 from PIL import Image
 
-# --- 1. Dataset Class ---
 class KittiMultimodalDataset(Dataset):
-    def __init__(self, crop_dir, lidar_crop_dir, img_transform=None, num_points=1024):
+    def __init__(self, crop_dir, lidar_crop_dir, img_transform=None, num_points=1024, mode='train', split_ratio=0.8):
         self.crop_dir = crop_dir
         self.lidar_crop_dir = lidar_crop_dir
         self.img_transform = img_transform
         self.num_points = num_points
-        
-        # Завантажуємо ВСІ файли (без [:20])
-        self.file_list = [f for f in os.listdir(crop_dir) if f.endswith('.png')]
         self.label_map = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'Truck': 0, 'Van': 0}
+    
+        all_files = [f for f in os.listdir(crop_dir) if f.endswith('.png')]
+        unique_scenes = list(set(f.split('_')[1] for f in all_files))
+        unique_scenes.sort()
+    
+        np.random.seed(42)
+        np.random.shuffle(unique_scenes)
+    
+        split_idx = int(len(unique_scenes) * split_ratio)
+        if mode == 'train':
+            allowed_scenes = set(unique_scenes[:split_idx])
+        else:
+            allowed_scenes = set(unique_scenes[split_idx:])
+        
+        self.file_list = [f for f in all_files if f.split('_')[1] in allowed_scenes]
 
     def __len__(self):
         return len(self.file_list)
@@ -52,18 +63,36 @@ class KittiMultimodalDataset(Dataset):
 class MultimodalTransformer(nn.Module):
     def __init__(self, num_classes=3, embed_dim=128, nhead=8, num_layers=3):
         super().__init__()
-        self.image_projection = nn.Linear(3 * 224 * 224, embed_dim)
+        
+        resnet= models.resnet18(pretrained = True)
+        # delete last layers
+        self.cnn_extractor= nn.Sequential(*list(resnet.children())[:-2])
+        
+        for param in self.cnn_extractor.parameters():
+            param.requires_grad = False
+        
+        self.image_projection = nn.Linear(512, embed_dim) #512 for 7x7 map
         self.point_projection = nn.Linear(3, embed_dim)
         encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=nhead, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.classifier = nn.Sequential(nn.Linear(embed_dim, 64), nn.ReLU(), nn.Linear(64, num_classes))
 
     def forward(self, image_tensor, point_cloud):
-        img_feat = torch.flatten(image_tensor, start_dim=1)
-        img_embed = self.image_projection(img_feat).unsqueeze(1) 
+        # image_tensor: [B, 3, 224, 224]
+        with torch.no_grad():
+            img_features = self.cnn_extractor(image_tensor) # [B, 512, 7, 7]
+        
+        # [B, 512, 7, 7] -> [B, 512, 49] -> [B, 49, 512]
+        img_features = img_features.flatten(2).permute(0, 2, 1)
+        img_embed = self.image_projection(img_features) # [B, 49, embed_dim]
+        
+        # Points: [B, 1024, 3] -> [B, 1024, embed_dim]
         point_embed = self.point_projection(point_cloud) 
-        x = torch.cat((img_embed, point_embed), dim=1)
+        
+        x = torch.cat((img_embed, point_embed), dim=1) # [B, 1073, embed_dim]
+        
         x = self.transformer_encoder(x)
+        
         return self.classifier(torch.mean(x, dim=1))
 
 # --- 3. Trainer with Validation ---
@@ -123,19 +152,20 @@ if __name__ == "__main__":
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    # Створюємо датасет і ділимо 80/20
+    # Create dataset and divide 80/20
     full_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline)
     train_size = int(0.8 * len(full_ds))
     val_size = len(full_ds) - train_size
-    train_ds, val_ds = random_split(full_ds, [train_size, val_size])
-
-    # Налаштування для GTX 1650 (batch_size=16 - безпечно для 4GB VRAM)
+    
+    train_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline, mode='train')
+    val_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline, mode='val')
+    
     train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4, pin_memory=True)
 
     model = MultimodalTransformer(num_classes=3).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    # Ваги класів: Car=1, Pedestrian=5, Cyclist=10 (через дисбаланс у KITTI)
+    # Class mass: Car=1, Pedestrian=5, Cyclist=10 
     criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 5.0, 10.0]).to(DEVICE))
 
     trainer = MultimodalTrainer(model, train_loader, val_loader, criterion, optimizer, DEVICE)
