@@ -6,4 +6,5 @@ kitti_root/testing/
 *.bin
 *.png
 *.txt
+*.npy
 .vscode/
