@@ -1,197 +1,217 @@
-import numpy as np
-import cv2
+import enum
+import torch
+import time
 import os
-import argparse
-import matplotlib.pyplot as plt
+import json
 
-class KittiDataset:
-    """Class for loading, parsing, and coordinate transformations of KITTI dataset data."""
-    def __init__(self, base_path, sample_id="000000"):
-        self.sample_id = sample_id
-        self.img_path = os.path.join(base_path, "image_2", f"{sample_id}.png")
-        self.lidar_path = os.path.join(base_path, "velodyne", f"{sample_id}.bin")
-        self.calib_path = os.path.join(base_path, "calib", f"{sample_id}.txt")
-        self.label_path = os.path.join(base_path, "label_2", f"{sample_id}.txt")
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from torch.utils.data import Dataset, DataLoader, random_split
+from torchvision import transforms, models
+from tkinter.ttk import Progressbar
+from tqdm import tqdm
+from PIL import Image
+
+class KittiMultimodalDataset(Dataset):
+    def __init__(self, crop_dir, lidar_crop_dir, img_transform=None, num_points=1024, mode='train', split_ratio=0.8):
+        self.crop_dir = crop_dir
+        self.lidar_crop_dir = lidar_crop_dir
+        self.img_transform = img_transform
+        self.num_points = num_points
+        self.label_map = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'Truck': 0, 'Van': 0}
+    
+        all_files = [f for f in os.listdir(crop_dir) if f.endswith('.png')]
+        unique_scenes = list(set(f.split('_')[1] for f in all_files))
+        unique_scenes.sort()
+    
+        np.random.seed(42)
+        np.random.shuffle(unique_scenes)
+    
+        split_idx = int(len(unique_scenes) * split_ratio)
+        if mode == 'train':
+            allowed_scenes = set(unique_scenes[:split_idx])
+        else:
+            allowed_scenes = set(unique_scenes[split_idx:])
         
-        self.P2, self.R0, self.V2C = self._load_calib()
-        self.labels = self._load_labels()
+        self.file_list = [f for f in all_files if f.split('_')[1] in allowed_scenes]
 
-    def _load_calib(self):
-        """Read calibration matrices according to the KITTI specification."""
-        with open(self.calib_path, 'r') as f:
-            lines = f.readlines()
+    def __len__(self):
+        return len(self.file_list)
+
+    def _sample_points(self, points):
+        if len(points) == 0: return np.zeros((self.num_points, 3))
+        if len(points) >= self.num_points:
+            indices = np.random.choice(len(points), self.num_points, replace=False)
+        else:
+            indices = np.random.choice(len(points), self.num_points, replace=True)
+        return points[indices]
+
+    def __getitem__(self, idx):
+        img_name = self.file_list[idx]
+        img_path = os.path.join(self.crop_dir, img_name)
+        image = Image.open(img_path).convert('RGB')
+        if self.img_transform: image = self.img_transform(image)
+
+        npy_name = img_name.replace('.png', '.npy')
+        npy_path = os.path.join(self.lidar_crop_dir, npy_name)
         
-        # P2: Projection matrix from rectified camera 0 coordinate system to 2D image of camera 2 (3x4)
-        p2 = np.array([float(x) for x in lines[2].split()[1:]]).reshape(3, 4)
-        # R0_rect: Rectification matrix for camera 0 (3x3)
-        r0 = np.array([float(x) for x in lines[4].split()[1:]]).reshape(3, 3)
-        # Tr_velo_to_cam: Transformation from LiDAR to camera 0 coordinate system (3x4)
-        v2c = np.array([float(x) for x in lines[5].split()[1:]]).reshape(3, 4)
-        return p2, r0, v2c
+        if os.path.exists(npy_path):
+            raw_points = np.load(npy_path)
+            points = self._sample_points(raw_points[:, :3] if raw_points.ndim > 1 else np.zeros((1,3)))
+        else:
+            points = np.zeros((self.num_points, 3))
 
-    def _load_labels(self):
-        """Parsing object annotation labels (Ground Truth)."""
-        objects = []
-        if not os.path.exists(self.label_path): 
-            return objects
-        with open(self.label_path, 'r') as f:
-            for line in f:
-                data = line.split()
-                objects.append({
-                    'type': data[0],
-                    'dimensions': [float(data[8]), float(data[9]), float(data[10])], # h, w, l
-                    'location': [float(data[11]), float(data[12]), float(data[13])], # x, y, z (in camera system)
-                    'rotation_y': float(data[14])
-                })
-        return objects
+        label = self.label_map.get(img_name.split('_')[0], 0)
+        return {'image': image, 'points': torch.from_numpy(points).float(), 'label': torch.tensor(label, dtype=torch.long)}
 
-    def get_lidar_points(self):
-        """Load binary point cloud file (x, y, z, r)."""
-        return np.fromfile(self.lidar_path, dtype=np.float32).reshape(-1, 4)
-
-    def get_image(self):
-        """Read frontal RGB image."""
-        return cv2.imread(self.img_path)
-
-
-class KittiVisualizer:
-    """Class for processing, projecting sensor data, and generating multimodal crops."""
-    def __init__(self, dataset: KittiDataset):
-        self.ds = dataset
-
-    def project_lidar_to_cam(self, points):
-        """Convert LiDAR points to the 3D rectified camera 0 coordinate system."""
-        pts_3d = points[:, :3]
-        # 1. From LiDAR to Rectified Cam using official KITTI formula: Y = R0_rect * T_velo_to_cam * X
-        pts_cam = (self.ds.R0 @ (self.ds.V2C[:, :3] @ pts_3d.T + self.ds.V2C[:, 3:4])).T
-        return pts_cam
-
-    def project_lidar_to_2d(self, points):
-        """Project LiDAR points directly onto the 2D image pixel plane."""
-        # Filter out points behind the vehicle (x <= 0 in the LiDAR system)
-        points_filtered = points[points[:, 0] > 0]
+# --- 2. Architecture ---
+class MultimodalTransformer(nn.Module):
+    def __init__(self, num_classes=3, embed_dim=128, nhead=8, num_layers=3):
+        super().__init__()
         
-        # Convert to camera 3D space
-        pts_cam = self.project_lidar_to_cam(points_filtered)
+        resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # delete last layers
+        self.cnn_extractor= nn.Sequential(*list(resnet.children())[:-2])
         
-        # Add homogeneous coordinate for multiplying by P2
-        pts_cam_homo = np.hstack((pts_cam, np.ones((pts_cam.shape[0], 1))))
-        pts_2d = (self.ds.P2 @ pts_cam_homo.T).T
+        for param in self.cnn_extractor.parameters():
+            param.requires_grad = False
         
-        depths = pts_2d[:, 2]
-        pts_2d[:, :2] /= pts_2d[:, 2:3] # Normalize by Z (depth)
-        
-        return pts_2d[:, :2], depths
+        self.image_projection = nn.Linear(512, embed_dim) #512 for 7x7 map
+        self.point_projection = nn.Linear(3, embed_dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=nhead, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.classifier = nn.Sequential(nn.Linear(embed_dim, 64), nn.ReLU(), nn.Linear(64, num_classes))
 
-    def get_3d_box_corners(self, obj):
-        """Compute the 8 corners of the 3D bounding box in the camera coordinate system."""
-        h, w, l = obj['dimensions']
-        ry = obj['rotation_y']
+    def forward(self, image_tensor, point_cloud):
+        # image_tensor: [B, 3, 224, 224]
+        with torch.no_grad():
+            img_features = self.cnn_extractor(image_tensor) # [B, 512, 7, 7]
         
-        # Rotation matrix around the vertical Y-axis (camera coordinate system)
-        R = np.array([
-            [np.cos(ry), 0, np.sin(ry)], 
-            [0, 1, 0], 
-            [-np.sin(ry), 0, np.cos(ry)]
-        ])
+        # [B, 512, 7, 7] -> [B, 512, 49] -> [B, 49, 512]
+        img_features = img_features.flatten(2).permute(0, 2, 1)
+        img_embed = self.image_projection(img_features) # [B, 49, embed_dim]
         
-        # Corner coordinates relative to the object center
-        x_corners = [l/2, l/2, -l/2, -l/2, l/2, l/2, -l/2, -l/2]
-        y_corners = [0, 0, 0, 0, -h, -h, -h, -h]
-        z_corners = [w/2, -w/2, -w/2, w/2, w/2, -w/2, -w/2, w/2]
+        # Points: [B, 1024, 3] -> [B, 1024, embed_dim]
+        point_embed = self.point_projection(point_cloud) 
         
-        corners_3d = R @ np.vstack([x_corners, y_corners, z_corners])
-        corners_3d += np.array(obj['location']).reshape(3, 1) # Shift by the position vector
+        x = torch.cat((img_embed, point_embed), dim=1) # [B, 1073, embed_dim]
         
-        # Project 3D box corners onto the 2D image plane
-        corners_3d_homo = np.vstack((corners_3d, np.ones((1, 8))))
-        pts_2d = self.ds.P2 @ corners_3d_homo
-        pts_2d[:2] /= pts_2d[2, :]
-        return corners_3d, pts_2d[:2, :].T.astype(np.int32)
+        x = self.transformer_encoder(x)
+        
+        return self.classifier(torch.mean(x, dim=1))
 
-    def auto_crop(self, output_img_dir="crops_img", output_lidar_dir="crops_lidar", padding=5):
-        """Automatically generate and synchronize image crops and LiDAR points crops."""
-        img = self.ds.get_image()
-        lidar_points = self.ds.get_lidar_points()
+# --- 3. Trainer with Validation ---
+class MultimodalTrainer:
+    def __init__(self, model, train_loader, val_loader, criterion, optimizer, device):
+        self.model = model.to(device)
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.device = device
+        self.best_val_acc = 0.0
+        self.history = []
+
+    def train(self, epochs=10):
+        print(f"Train started on device: {self.device}")
+
+        for epoch in range(epochs):
+            start_time = time.time()
+            self.model.train()
+            total_loss, correct, total = 0, 0, 0
         
-        # Convert all LiDAR points to camera 3D space for geometric filtering inside the box
-        pts_cam = self.project_lidar_to_cam(lidar_points)
-
-        if not os.path.exists(output_img_dir): os.makedirs(output_img_dir)
-        if not os.path.exists(output_lidar_dir): os.makedirs(output_lidar_dir)
-
-        for i, obj in enumerate(self.ds.labels):
-            if obj['type'] in ['DontCare', 'Misc']: 
-                continue
-                
-            corners_3d, corners_2d = self.get_3d_box_corners(obj)
+            pbar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), desc=f"Epoch {epoch+1}/{epochs}")
+        
+            for batch_idx, batch in pbar:
+                img = batch['image'].to(self.device)
+                pts = batch['points'].to(self.device)
+                lbl = batch['label'].to(self.device)
             
-            # --- 1. Crop RGB image ---
-            x1, y1 = np.clip(np.min(corners_2d, axis=0) - padding, 0, [img.shape[1], img.shape[0]])
-            x2, y2 = np.clip(np.max(corners_2d, axis=0) + padding, 0, [img.shape[1], img.shape[0]])
+                self.optimizer.zero_grad()
+                out = self.model(img, pts)
+            
+                loss = self.criterion(out, lbl)
+                loss.backward()
+                self.optimizer.step()
+            
+                total_loss += loss.item()
+                _, pred = torch.max(out, 1)
+                total += lbl.size(0)
+                correct += (pred == lbl).sum().item()
 
-            if x2 > x1 and y2 > y1:
-                crop = img[int(y1):int(y2), int(x1):int(x2)]
-                img_name = f"{obj['type']}_{self.ds.sample_id}_{i}.png"
-                cv2.imwrite(os.path.join(output_img_dir, img_name), crop)
+                if batch_idx % 10 == 0:
+                    current_acc = 100.0 * correct / total
+                    pbar.set_postfix({
+                        'Loss': f"{loss.item():.4f}", 
+                        'Acc': f"{current_acc:.2f}%"
+                    })
 
-                # --- 2. Crop LiDAR points (Geometric filtering using 3D Bounding Box) ---
-                # Determine object boundaries in camera space
-                xmin, xmax = np.min(corners_3d[0, :]), np.max(corners_3d[0, :])
-                ymin, ymax = np.min(corners_3d[1, :]), np.max(corners_3d[1, :])
-                zmin, zmax = np.min(corners_3d[2, :]), np.max(corners_3d[2, :])
-                
-                # Mask for points falling inside the 3D bounding box
-                mask = (pts_cam[:, 0] >= xmin) & (pts_cam[:, 0] <= xmax) & \
-                       (pts_cam[:, 1] >= ymin) & (pts_cam[:, 1] <= ymax) & \
-                       (pts_cam[:, 2] >= zmin) & (pts_cam[:, 2] <= zmax)
-                
-                # Save raw LiDAR points that fell into the object zone
-                crop_points = lidar_points[mask]
-                
-                lidar_name = f"{obj['type']}_{self.ds.sample_id}_{i}.bin"
-                crop_points.tofile(os.path.join(output_lidar_dir, lidar_name))
-
-
-class KittiFullProcessor(KittiVisualizer):
-    """Class for batch processing the entire sequential KITTI dataset."""
-    def __init__(self, base_path):
-        self.base_path = base_path
-        self.lidar_dir = os.path.join(base_path, "velodyne")
-        if not os.path.exists(self.lidar_dir):
-            raise FileNotFoundError(f"Directory {self.lidar_dir} not found! Check BASE_PATH.")
-        self.sample_ids = sorted([f.split('.')[0] for f in os.listdir(self.lidar_dir) if f.endswith('.bin')])
-        print(f"[INFO] Found {len(self.sample_ids)} frames for dataset generation.")
-
-    def run_full_extraction(self, base_output_dir):
-        """Run the full feature extraction pipeline."""
-        img_out = os.path.join(base_output_dir, "crop_images")
-        lidar_out = os.path.join(base_output_dir, "crop_lidar")
+            epoch_loss = total_loss / len(self.train_loader)
+            train_acc = 100.0 * correct / total
+            val_acc = self.validate()
+            epoch_duration = time.time() - start_time
         
-        for idx, s_id in enumerate(self.sample_ids):
-            try:
-                current_ds = KittiDataset(self.base_path, sample_id=s_id)
-                self.ds = current_ds
-                
-                # Run synchronized sensor cropping
-                self.auto_crop(output_img_dir=img_out, output_lidar_dir=lidar_out)
-                
-                if (idx + 1) % 50 == 0 or (idx + 1) == len(self.sample_ids):
-                    print(f"[PROGRESS] Processed frames: {idx + 1}/{len(self.sample_ids)}")
-            except Exception as e:
-                print(f"[ERROR] Error processing frame {s_id}: {e}")
+            epoch_log = {
+            "epoch": epoch + 1,
+            "train_loss": round(epoch_loss, 4),
+            "train_acc": round(train_acc, 2),
+            "val_acc": round(val_acc, 2),
+            "duration_sec": round(epoch_duration, 2)
+            }
+            self.history.append(epoch_log)
 
+            print(f"\n[Epoch {epoch+1}] Time: {epoch_duration:.1f}с | Loss: {epoch_loss:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
 
+            if val_acc > self.best_val_acc:
+                self.best_val_acc = val_acc
+                torch.save(self.model.state_dict(), "best_multimodal_model.pth")
+                print(f"New validation record.")
+
+            with open("training_history.json", "w") as f:
+                json.dump(self.history, f)
+                    
+    def validate(self):
+        self.model.eval()
+        correct, total = 0, 0
+        with torch.no_grad():
+            for batch in self.val_loader:
+                img, pts, lbl = batch['image'].to(self.device), batch['points'].to(self.device), batch['label'].to(self.device)
+                out = self.model(img, pts)
+                _, pred = torch.max(out, 1)
+                total += lbl.size(0)
+                correct += (pred == lbl).sum().item()
+        return 100 * correct / total
+
+# --- 4. Main ---
 if __name__ == "__main__":
-    # Configure CLI arguments (best practice instead of hardcoding paths)
-    parser = argparse.ArgumentParser(description="KITTI Multimodal Preprocessing Pipeline")
-    parser.add_argument('--base_path', type=str, default=r"D:\magister\coursa\kitti_root\training", 
-                        help="Path to the original training folder of the KITTI dataset")
-    parser.add_argument('--output_path', type=str, default=r"D:\magister\coursa\full_dataset_crops", 
-                        help="Path to save the resulting synchronized multimodal crops")
-    args = parser.parse_args()
+    CROP_DIR = r"D:\magister\coursa\full_dataset_crops\crop_images"
+    LIDAR_DIR = r"D:\magister\coursa\full_lidar_crops"
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on: {DEVICE}")
 
-    print("=== Starting multimodal data preparation ===")
-    processor = KittiFullProcessor(args.base_path)
-    processor.run_full_extraction(base_output_dir=args.output_path)
-    print("=== Processing completed successfully! ===")
+    img_pipeline = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    # Create dataset and divide 80/20
+    full_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline)
+    train_size = int(0.8 * len(full_ds))
+    val_size = len(full_ds) - train_size
+    
+    train_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline, mode='train')
+    val_ds = KittiMultimodalDataset(CROP_DIR, LIDAR_DIR, img_transform=img_pipeline, mode='val')
+    
+    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4, pin_memory=True)
+
+    model = MultimodalTransformer(num_classes=3).to(DEVICE)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    # Class mass: Car=1, Pedestrian=5, Cyclist=10 
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 5.0, 10.0]).to(DEVICE))
+
+    trainer = MultimodalTrainer(model, train_loader, val_loader, criterion, optimizer, DEVICE)
+    trainer.train(epochs=10)
+    torch.save(model.state_dict(), "multimodal_transformer_final.pth")
