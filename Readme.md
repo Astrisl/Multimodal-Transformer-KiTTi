@@ -120,7 +120,7 @@ IndexError (вихід за межі)
 
 --------------------------------------------------------------------------------
 # Використані джерела
-KITTI Dataset: Geiger A. et al., 2012.
-Transformer Architecture: Vaswani A. et al., 2017.
-PyTorch Documentation: Paszke A. et al., 2019.
-NumPy & OpenCV: Harris C.R. (2020), Bradski G. (2000)
+* KITTI Dataset: Geiger A. et al., 2012.
+* Transformer Architecture: Vaswani A. et al., 2017.
+* PyTorch Documentation: Paszke A. et al., 2019.
+* NumPy & OpenCV: Harris C.R. (2020), Bradski G. (2000)

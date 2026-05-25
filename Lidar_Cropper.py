@@ -142,8 +142,8 @@ class KittiLidarCropper:
                 output_name = f"{obj['type']}_{s_id}_{i}.npy"
                 np.save(self.output_dir / output_name, crop)
                 
-        print(f"\n✅ Processing complete! Saved to {self.output_dir}")
-        print(f"⚠️ Skipped {empty_crops_count} objects due to 0 LiDAR points (occluded or too far).")
+        print(f"\nProcessing complete! Saved to {self.output_dir}")
+        print(f"Skipped {empty_crops_count} objects due to 0 LiDAR points (occluded or too far).")
 
 if __name__ == "__main__":
     # Define paths (Use raw strings 'r' to prevent escape character issues in Windows)
