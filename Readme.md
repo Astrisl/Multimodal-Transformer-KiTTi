@@ -25,10 +25,8 @@
 ```bash
 multimodal-transformer-kitti/
 │
-├── models.py              # Архітектура моделі Transformer Encoder
 ├── dataset.py             # Модуль завантаження та фільтрації датасету KITTI
 ├── lidar_cropper.py       # Алгоритми геометричного 3D-фільтрування точок
-├── train.py               # Конвеєр (pipeline) навчання моделі
 ├── inference_script.py    # Демонстраційний скрипт / інференс на реальних даних
 ├── main.py                # Конвеєр попередньої обробки та підготовки даних
 ├── requirements.txt       # Список залежностей проєкту
