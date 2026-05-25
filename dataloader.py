@@ -1,10 +1,16 @@
+import enum
 import torch
+import time
+import os
+import json
+
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-import os
 from torch.utils.data import Dataset, DataLoader, random_split
-from torchvision import transforms
+from torchvision import transforms, models
+from tkinter.ttk import Progressbar
+from tqdm import tqdm
 from PIL import Image
 
 class KittiMultimodalDataset(Dataset):
@@ -64,7 +70,7 @@ class MultimodalTransformer(nn.Module):
     def __init__(self, num_classes=3, embed_dim=128, nhead=8, num_layers=3):
         super().__init__()
         
-        resnet= models.resnet18(pretrained = True)
+        resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         # delete last layers
         self.cnn_extractor= nn.Sequential(*list(resnet.children())[:-2])
         
@@ -104,29 +110,67 @@ class MultimodalTrainer:
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
+        self.best_val_acc = 0.0
+        self.history = []
 
     def train(self, epochs=10):
+        print(f"Train started on device: {self.device}")
+
         for epoch in range(epochs):
+            start_time = time.time()
             self.model.train()
             total_loss, correct, total = 0, 0, 0
-            for batch in self.train_loader:
-                img, pts, lbl = batch['image'].to(self.device), batch['points'].to(self.device), batch['label'].to(self.device)
-                
+        
+            pbar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), desc=f"Epoch {epoch+1}/{epochs}")
+        
+            for batch_idx, batch in pbar:
+                img = batch['image'].to(self.device)
+                pts = batch['points'].to(self.device)
+                lbl = batch['label'].to(self.device)
+            
                 self.optimizer.zero_grad()
                 out = self.model(img, pts)
+            
                 loss = self.criterion(out, lbl)
                 loss.backward()
                 self.optimizer.step()
-                
+            
                 total_loss += loss.item()
                 _, pred = torch.max(out, 1)
                 total += lbl.size(0)
                 correct += (pred == lbl).sum().item()
-            
-            # Validation phase
-            val_acc = self.validate()
-            print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss/len(self.train_loader):.4f} | Train Acc: {100*correct/total:.2f}% | Val Acc: {val_acc:.2f}%")
 
+                if batch_idx % 10 == 0:
+                    current_acc = 100.0 * correct / total
+                    pbar.set_postfix({
+                        'Loss': f"{loss.item():.4f}", 
+                        'Acc': f"{current_acc:.2f}%"
+                    })
+
+            epoch_loss = total_loss / len(self.train_loader)
+            train_acc = 100.0 * correct / total
+            val_acc = self.validate()
+            epoch_duration = time.time() - start_time
+        
+            epoch_log = {
+            "epoch": epoch + 1,
+            "train_loss": round(epoch_loss, 4),
+            "train_acc": round(train_acc, 2),
+            "val_acc": round(val_acc, 2),
+            "duration_sec": round(epoch_duration, 2)
+            }
+            self.history.append(epoch_log)
+
+            print(f"\n📊 [Epoch {epoch+1}] Time: {epoch_duration:.1f}с | Loss: {epoch_loss:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
+
+            if val_acc > self.best_val_acc:
+                self.best_val_acc = val_acc
+                torch.save(self.model.state_dict(), "best_multimodal_model.pth")
+                print(f"⭐ New validation record.")
+
+            with open("training_history.json", "w") as f:
+                json.dump(self.history, f)
+                    
     def validate(self):
         self.model.eval()
         correct, total = 0, 0
