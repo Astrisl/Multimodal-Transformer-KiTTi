@@ -58,11 +58,10 @@ cd multimodal-transformer-kitti
 ```
 python lidar_crooper.py
 ```
-4.Фінальна підготовка та синхронізація всього датасету
+4. Фінальна підготовка та синхронізація всього датасету
 ```
 python dataset_crooper.py
 ```
-
 5. Запуск навчання
 ```
 python main.py
