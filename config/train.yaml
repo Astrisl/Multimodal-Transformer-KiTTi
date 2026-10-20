@@ -1,0 +1,16 @@
+# Optimisation settings (src/training/train.py).
+seed: 42
+epochs: 20
+batch_size: 16            # fits a 4 GB GPU (GTX 1650) with AMP
+num_workers: 4
+num_points: 1024
+lr: 0.0003                # peak learning rate of the one-cycle schedule
+weight_decay: 0.0001
+grad_clip: 1.0
+amp: true                 # mixed precision on CUDA
+label_smoothing: 0.0
+early_stopping_patience: 5
+# Car / Pedestrian / Cyclist weights of the cross-entropy:
+#   [1.0, 5.0, 10.0] - fixed (v1 setting), "auto" - sqrt inverse frequency, null - none
+class_weights: [1.0, 5.0, 10.0]
+output_dir: runs/default
