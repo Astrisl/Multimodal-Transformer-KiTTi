@@ -1,0 +1,11 @@
+# Architecture of the intermediate-fusion Transformer (src/model/fusion_transformer.py).
+model:
+  embed_dim: 128            # token width shared by both modalities
+  nhead: 8                  # attention heads (embed_dim must be divisible by nhead)
+  num_layers: 3             # Transformer encoder layers
+  ff_dim: 256               # hidden size of each layer's feed-forward block
+  dropout: 0.1
+  point_features: 4         # x, y, z, intensity
+  pretrained_backbone: true # ImageNet weights for ResNet-18 (downloaded on first use)
+  freeze_backbone: true     # keeps VRAM usage low (4 GB GPUs) and avoids overfitting
+  modality_dropout: 0.2     # share of training samples whose image is masked (NFR-05)
