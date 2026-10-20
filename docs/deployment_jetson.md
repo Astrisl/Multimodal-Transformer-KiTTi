@@ -49,7 +49,7 @@ echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc && source ~/.bashrc
 ## 4. Проєкт
 
 ```bash
-git clone <repo-url> ~/multimodal-lidar-ir-transformer && cd ~/multimodal-lidar-ir-transformer
+git clone https://github.com/Astrisl/Multimodal-Transformer-KiTTi.git ~/multimodal-lidar-ir-transformer && cd ~/multimodal-lidar-ir-transformer
 python3 -m venv --system-site-packages .venv    # system-site-packages: rclpy, cv_bridge, tensorrt
 source .venv/bin/activate
 ```

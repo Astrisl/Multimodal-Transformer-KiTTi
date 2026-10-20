@@ -61,7 +61,7 @@ multimodal-lidar-ir-transformer/
 ## Встановлення
 
 ```bash
-git clone <repo-url> multimodal-lidar-ir-transformer
+git clone https://github.com/Astrisl/Multimodal-Transformer-KiTTi.git multimodal-lidar-ir-transformer
 cd multimodal-lidar-ir-transformer
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
