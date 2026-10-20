@@ -1,0 +1,15 @@
+# Live-sensor calibration (utils/calibration.py: Calibration.from_yaml).
+# Replace with the result of your LiDAR-camera calibration; values below are the
+# KITTI 000000 frame and only serve as a format example.
+P:                # 3x4 camera projection matrix (rectified)
+  [721.5377, 0.0, 609.5593, 44.85728,
+   0.0, 721.5377, 172.854, 0.2163791,
+   0.0, 0.0, 1.0, 0.002745884]
+R0:               # 3x3 rectification; identity for a monocular camera
+  [1.0, 0.0, 0.0,
+   0.0, 1.0, 0.0,
+   0.0, 0.0, 1.0]
+Tr_lidar_to_cam:  # 3x4 rigid transform LiDAR -> camera
+  [0.000692798, -0.9999722, -0.002757829, -0.02457729,
+   -0.001162982, 0.002749836, -0.9999955, -0.06127237,
+   0.9999991, 0.0006959894, -0.001160069, -0.3321029]
