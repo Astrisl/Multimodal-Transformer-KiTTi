@@ -1,0 +1,22 @@
+# Core (training + offline pipeline). On Jetson install torch/torchvision from the
+# NVIDIA JetPack wheels instead (see docs/deployment_jetson.md).
+numpy>=1.24
+scipy>=1.10
+opencv-python-headless>=4.8
+pillow>=10.0
+pyyaml>=6.0
+tqdm>=4.66
+matplotlib>=3.7
+torch>=2.1
+torchvision>=0.16
+
+# Export / alternative inference backends
+onnx>=1.15
+onnxscript>=0.1
+onnxruntime>=1.17
+
+# Development
+pytest>=7.4
+flake8>=7.0
+black>=24.0
+pre-commit>=3.5

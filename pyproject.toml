@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multimodal-lidar-ir-transformer"
+version = "2.0.0"
+description = "Multimodal LiDAR + RGB/IR scene analysis with an intermediate-fusion Transformer"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Яремків Р.М." }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "matplotlib>=3.7",
+    "torch>=2.1",
+    "torchvision>=0.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "flake8>=7.0", "black>=24.0", "pre-commit>=3.5"]
+export = ["onnx>=1.15", "onnxscript>=0.1", "onnxruntime>=1.17"]
+
+# The code lives in ./src (structure required by the project report, section 6.1)
+# and is installed under the import name `multimodal_transformer`.
+[tool.setuptools]
+package-dir = { "multimodal_transformer" = "src" }
+packages = [
+    "multimodal_transformer",
+    "multimodal_transformer.data_pipeline",
+    "multimodal_transformer.model",
+    "multimodal_transformer.training",
+    "multimodal_transformer.ros2_nodes",
+    "multimodal_transformer.utils",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::torch.jit.TracerWarning",
+]

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Data (KITTI, generated crops, rosbags) - never committed
+data/
+kitti_root/
+crops/
+*.bin
+*.npy
+*.mcap
+*.db3
+*.sqlite
+
+# Training / export artefacts
+runs/
+checkpoints/
+*.pth
+*.pt
+*.onnx
+*.engine
+*.plan
+
+# ROS 2 workspace build output
+log/
+install/
