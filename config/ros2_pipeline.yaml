@@ -1,0 +1,59 @@
+# ROS 2 parameters of the real-time pipeline (ros2 --params-file format).
+# Every parameter is described in docs/configuration.md; topics in docs/ros2_api.md.
+# Note: ROS 2 parameters are strictly typed - keep the decimal point on float values.
+
+roi_extraction:
+  ros__parameters:
+    lidar_topic: /lidar/points
+    candidates_topic: /roi/candidates
+    x_range: [0.0, 40.0]          # m, region of interest in the LiDAR frame
+    y_range: [-20.0, 20.0]
+    z_range: [-3.0, 2.0]
+    voxel_size: 0.1               # m, down-sampling before clustering
+    ground_distance: 0.2          # m, RANSAC inlier threshold for the ground plane
+    ransac_iterations: 60
+    max_ground_tilt_deg: 15.0
+    cluster_tolerance: 0.5        # m, max neighbour distance inside one cluster
+    min_cluster_points: 10
+    max_cluster_points: 20000
+    min_size: [0.2, 0.2, 0.4]     # m, l/w/h; smaller clusters are clutter
+    max_size: [7.0, 3.5, 3.5]     # m, larger clusters are walls / buildings
+
+multimodal_inference:
+  ros__parameters:
+    lidar_topic: /lidar/points
+    image_topic: /camera/image_raw
+    candidates_topic: /roi/candidates
+    detections_topic: /detected_objects
+    markers_topic: /detected_objects/markers
+    calibration_file: config/calibration_example.yaml
+    use_camera: true
+    max_sync_dt: 0.05             # s, max LiDAR-camera stamp difference
+    image_buffer_size: 10
+    sync_queue_size: 2            # scans waiting for their candidates; small = drop stale
+    image_padding: 5
+    min_image_brightness: 15.0    # 0..255, darker patches -> LiDAR-only (NFR-05)
+    class_names: [Car, Pedestrian, Cyclist]
+    num_points: 1024
+    intensity_scale: 1.0          # 1/255 for Livox reflectivity
+    min_points: 5
+    min_confidence: 0.5
+    backend: torch                # torch | onnxruntime | tensorrt
+    checkpoint: runs/default/best.pth
+    onnx: model.onnx
+    engine: model.engine
+    device: cuda
+    fp16: true
+    max_batch: 32
+    journal_db: ""                # e.g. journal/detections.sqlite; empty disables logging
+    session_location: ""
+
+kitti_player:
+  ros__parameters:
+    kitti_split_dir: ""           # <kitti_root>/training
+    rate_hz: 10.0
+    lidar_topic: /lidar/points
+    image_topic: /camera/image_raw
+    lidar_frame: lidar
+    loop: true
+    calibration_out: /tmp/kitti_calibration.yaml
