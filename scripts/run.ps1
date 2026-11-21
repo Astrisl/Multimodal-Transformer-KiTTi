@@ -10,6 +10,7 @@
     .\scripts\run.ps1 demo          # picture of one classified frame -> runs/default/demo.png
     .\scripts\run.ps1 demo 000123   # same for a given frame
     .\scripts\run.ps1 export        # ONNX model -> runs/default/model.onnx
+    .\scripts\run.ps1 experiments   # sparse LiDAR, error analysis, speed -> runs/default/experiments
     .\scripts\run.ps1 all           # build + train + eval + demo + export
     .\scripts\run.ps1 info          # Python / torch / CUDA / dataset status
 
@@ -17,7 +18,7 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("info", "test", "build", "train", "eval", "demo", "export", "all")]
+    [ValidateSet("info", "test", "build", "train", "eval", "demo", "export", "experiments", "all")]
     [string]$Command = "info",
     [Parameter(Position = 1)]
     [string]$SampleId
@@ -76,6 +77,13 @@ switch ($Command) {
         Invoke-Py -m multimodal_transformer.model.demo @demoArgs
     }
     "export" { Assert-Checkpoint; Invoke-Py -m multimodal_transformer.model.export --checkpoint $Ckpt --onnx (Join-Path $Run "model.onnx") }
+    "experiments" {
+        Assert-Checkpoint
+        $expArgs = @("--checkpoint", $Ckpt, "--output-dir", (Join-Path $Run "experiments"))
+        $onnx = Join-Path $Run "model.onnx"
+        if (Test-Path $onnx) { $expArgs += @("--onnx", $onnx) }
+        Invoke-Py -m multimodal_transformer.training.experiments @expArgs
+    }
     "all"    {
         Invoke-Py -m multimodal_transformer.data_pipeline.build_dataset --config dataset.yaml
         Invoke-Py -m multimodal_transformer.training.train
