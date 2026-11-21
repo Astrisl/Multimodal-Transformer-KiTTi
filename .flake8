@@ -3,3 +3,6 @@ max-line-length = 100
 # E203/W503 conflict with black's formatting.
 extend-ignore = E203, W503
 exclude = .git, __pycache__, .venv, build
+per-file-ignores =
+    # Thesis tooling: long bibliography entries and figure labels.
+    thesis/*: E501
