@@ -163,7 +163,16 @@ class MultimodalFusionTransformer(nn.Module):
         keep_rest = torch.zeros(batch, 1 + n_pts, dtype=torch.bool, device=points.device)
         padding_mask = torch.cat([keep_rest[:, :1], ignore_img, keep_rest[:, 1:]], dim=1)
 
-        encoded = self.encoder(tokens, src_key_padding_mask=padding_mask)
+        # PyTorch's inference "fast path" for TransformerEncoderLayer materialises the
+        # full [B, heads, T, T] attention matrix when a padding mask is given (T = 1074
+        # tokens here): 4.7 GB at batch 32 and 17x slower on a GTX 1650. The regular path
+        # uses scaled_dot_product_attention (memory-efficient kernels) with the same result.
+        fastpath = torch.backends.mha.get_fastpath_enabled()
+        torch.backends.mha.set_fastpath_enabled(False)
+        try:
+            encoded = self.encoder(tokens, src_key_padding_mask=padding_mask)
+        finally:
+            torch.backends.mha.set_fastpath_enabled(fastpath)
         return self.head(self.norm(encoded[:, 0]))
 
 

@@ -70,6 +70,20 @@ def test_modality_dropout_only_in_training():
     assert not torch.allclose(model(image, points), model(torch.randn_like(image), points))
 
 
+def test_inference_bypasses_attention_fastpath_and_restores_flag(model, monkeypatch):
+    # The fast path builds the full attention matrix (4.7 GB at batch 32 on 1074 tokens).
+    def fastpath_kernel(*args, **kwargs):
+        raise AssertionError("TransformerEncoderLayer fast path was used")
+
+    monkeypatch.setattr(torch, "_transformer_encoder_layer_fwd", fastpath_kernel)
+    torch.backends.mha.set_fastpath_enabled(True)
+    image, points, _ = random_batch(2)
+    with torch.inference_mode():
+        logits = model(image, points, torch.tensor([1.0, 0.0]))
+    assert logits.shape == (2, 3)
+    assert torch.backends.mha.get_fastpath_enabled()
+
+
 def test_token_count():
     assert IMAGE_TOKENS == 49
 
