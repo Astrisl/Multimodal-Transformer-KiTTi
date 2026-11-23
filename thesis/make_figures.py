@@ -624,7 +624,41 @@ def fig_speed():
     save(fig, "fig4_speed_fix.png")
 
 
+def fig_drive():
+    """Same frame of KITTI raw drive 0005: 3-class model vs model with Background."""
+    import cv2  # noqa: PLC0415
+
+    drive = "2011_09_26_drive_0005_sync"
+    before = cv2.imread(str(RUN / "drive_snap" / drive / "frame_0060.png"))[:, :, ::-1]
+    after = cv2.imread(
+        str(ROOT / "runs" / "background" / "drive_demo_final" / drive / "frame_0060.png")
+    )[:, :, ::-1]
+    cam_h = 375
+    fig = plt.figure(figsize=(16.5 / 2.54, 21 / 2.54))
+    grid = fig.add_gridspec(3, 1, height_ratios=[cam_h, cam_h, 430], hspace=0.12)
+    panels = [
+        (before[:cam_h], "а) модель на 3 класи: стовпи, бордюри й дерева отримують мітки"),
+        (after[:cam_h], "б) модель з класом Background: той самий кадр"),
+        (
+            after[cam_h + 70 :],
+            "в) вид зверху для б) (білі рамки – розмітка KITTI, кольорові – передбачення)",
+        ),
+    ]
+    for row, (image, title) in enumerate(panels):
+        ax = fig.add_subplot(grid[row])
+        ax.imshow(image)
+        ax.set_title(title, fontsize=11)
+        ax.axis("off")
+    save(fig, "fig4_drive_background.png")
+
+
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1:  # e.g. python make_figures.py fig_drive
+        for name in sys.argv[1:]:
+            globals()[name]()
+        sys.exit()
     fig_fusion_strategies()
     fig_encoder_layer()
     fig_coordinate_chain()
@@ -640,3 +674,4 @@ if __name__ == "__main__":
     fig_sparse()
     fig_breakdowns()
     fig_speed()
+    fig_drive()
