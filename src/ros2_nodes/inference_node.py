@@ -82,6 +82,7 @@ PARAMETERS = {
     "image_padding": 5,
     "min_image_brightness": 15.0,
     "class_names": ["Car", "Pedestrian", "Cyclist"],
+    "reject_classes": ["Background"],
     "num_points": 1024,
     "intensity_scale": 1.0,
     "min_points": 5,
@@ -231,6 +232,8 @@ class InferenceNode(Node):
         detections, records = [], []
         for (box, yaw, size), pred in zip(boxes, predictions):
             if pred.confidence < self.p["min_confidence"]:
+                continue
+            if pred.class_name in self.p["reject_classes"]:  # clutter, not an object
                 continue
             detections.append(
                 make_detection(

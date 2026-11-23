@@ -39,3 +39,10 @@ def test_extracts_objects_and_removes_ground():
 
 def test_empty_scan_gives_no_candidates():
     assert RoiExtractor().extract(np.zeros((0, 4))) == []
+
+
+def test_crop_region_limits_azimuth():
+    points = np.array([[10.0, 0.0, 0.0, 0], [10.0, 9.0, 0.0, 0], [5.0, 10.0, 0.0, 0]])
+    assert len(RoiExtractor(RoiConfig()).crop_region(points)) == 3
+    kept = RoiExtractor(RoiConfig(max_azimuth_deg=45.0)).crop_region(points)
+    np.testing.assert_allclose(kept[:, :2], [[10.0, 0.0], [10.0, 9.0]])

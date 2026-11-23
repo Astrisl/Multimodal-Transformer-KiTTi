@@ -69,6 +69,12 @@
 `/lidar/points` і `/camera/image_raw` з однаковим stamp (за замовчуванням 10 Гц) та записує
 калібрування у `calibration_out` для вузла інференсу. Для демонстрації без обладнання.
 
+Джерела: окремі кадри KITTI Object (`kitti_split_dir`) або безперервна поїздка KITTI raw
+(`kitti_raw_dir`). Для поїздки рух автомобіля з GPS/IMU (OXTS) публікується як TF
+`world → lidar` і як `nav_msgs/Path` у `/ego/path`, тож у RViz2 з
+`config/rviz/kitti_drive.rviz` (fixed frame `world`, камера слідує за `lidar`) видно, як
+автомобіль їде сценою.
+
 ## Launch
 
 `src/ros2_nodes/launch/scene_analysis.launch.py`
@@ -76,10 +82,13 @@
 | Аргумент | За замовчуванням | Опис |
 | :-- | :-- | :-- |
 | `params_file` | `config/ros2_pipeline.yaml` | параметри вузлів |
-| `kitti_split_dir` | `""` | якщо задано — програвання KITTI замість сенсорів |
+| `kitti_split_dir` | `""` | якщо задано — програвання кадрів KITTI Object замість сенсорів |
+| `kitti_raw_dir` | `""` | якщо задано — програвання поїздки KITTI raw (з рухом автомобіля в TF) |
 | `use_slam` | `true` | запуск FAST-LIO2 (`fast_lio/launch/mapping.launch.py`) |
 | `fast_lio_config` | `mid360.yaml` | файл конфігурації FAST-LIO2 |
-| `rviz` | `true` | RViz2 з `config/rviz/scene_analysis.rviz` |
+| `rviz` | `true` | запуск RViz2 |
+| `rviz_config` | `config/rviz/scene_analysis.rviz` | конфігурація RViz2; для поїздки — `config/rviz/kitti_drive.rviz` |
 | `python` | `python3` | інтерпретатор зі встановленим проєктом (наприклад, venv) |
 
-Датасет KITTI Object не містить IMU, тому з `kitti_split_dir` слід вказувати `use_slam:=false`.
+Записи KITTI не містять сирого IMU потрібної частоти, тому з `kitti_split_dir` / `kitti_raw_dir`
+слід вказувати `use_slam:=false`.

@@ -3,7 +3,7 @@
     One entry point for the whole pipeline on Windows.
 
 .EXAMPLE
-    .\scripts\run.ps1 test          # 44 unit/integration tests (no KITTI needed)
+    .\scripts\run.ps1 test          # unit/integration tests (no KITTI needed)
     .\scripts\run.ps1 build         # KITTI frames -> object crops (data/kitti/crops)
     .\scripts\run.ps1 train         # train, best checkpoint -> runs/default/best.pth
     .\scripts\run.ps1 eval          # metrics -> runs/default/report.json
@@ -11,6 +11,9 @@
     .\scripts\run.ps1 demo 000123   # same for a given frame
     .\scripts\run.ps1 export        # ONNX model -> runs/default/model.onnx
     .\scripts\run.ps1 experiments   # sparse LiDAR, error analysis, speed -> runs/default/experiments
+    .\scripts\run.ps1 background    # mine Background crops + fine-tune 4 classes -> runs/background/best.pth
+    .\scripts\run.ps1 drive         # replay KITTI raw drives (data\kitti_raw) -> runs/background/drive_demo
+    .\scripts\run.ps1 drive <dir>   # same for one *_sync drive folder
     .\scripts\run.ps1 all           # build + train + eval + demo + export
     .\scripts\run.ps1 info          # Python / torch / CUDA / dataset status
 
@@ -18,7 +21,7 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("info", "test", "build", "train", "eval", "demo", "export", "experiments", "all")]
+    [ValidateSet("info", "test", "build", "train", "eval", "demo", "export", "experiments", "background", "drive", "all")]
     [string]$Command = "info",
     [Parameter(Position = 1)]
     [string]$SampleId
@@ -83,6 +86,21 @@ switch ($Command) {
         $onnx = Join-Path $Run "model.onnx"
         if (Test-Path $onnx) { $expArgs += @("--onnx", $onnx) }
         Invoke-Py -m multimodal_transformer.training.experiments @expArgs
+    }
+    "background" {
+        Assert-Checkpoint
+        $bg = Join-Path $Root "runs\background"
+        Invoke-Py -m multimodal_transformer.data_pipeline.mine_background --config dataset.yaml
+        Invoke-Py -m multimodal_transformer.training.train --dataset dataset_background.yaml --model model.yaml --train train_background.yaml
+        Invoke-Py -m multimodal_transformer.training.evaluate --checkpoint (Join-Path $bg "best.pth") --dataset dataset_background.yaml --output (Join-Path $bg "report.json")
+    }
+    "drive" {
+        # The second argument is a drive folder here; by default every *_sync drive under data\kitti_raw.
+        $drives = if ($SampleId) { @($SampleId) } else { Get-ChildItem (Join-Path $Root "data\kitti_raw") -Recurse -Directory -Filter "*_sync" | ForEach-Object FullName }
+        if (-not $drives) { throw "No KITTI raw drives under data\kitti_raw (unpack *_sync.zip and *_calib.zip there)" }
+        foreach ($d in $drives) {
+            Invoke-Py -m multimodal_transformer.training.drive_demo --drive $d --output-dir (Join-Path $Root "runs\background\drive_demo")
+        }
     }
     "all"    {
         Invoke-Py -m multimodal_transformer.data_pipeline.build_dataset --config dataset.yaml

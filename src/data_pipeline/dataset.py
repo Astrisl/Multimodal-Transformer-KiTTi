@@ -80,8 +80,10 @@ class KittiMultimodalDataset(Dataset):
         intensity_scale: float = 1.0,
         image_size: int = 224,
         augment: bool = False,
+        index_file: str = "index.csv",
     ) -> None:
         self.crops_dir = Path(crops_dir)
+        self.index_file = index_file
         self.class_names = list(class_names)
         self.class_to_id = {name: i for i, name in enumerate(self.class_names)}
 
@@ -100,7 +102,7 @@ class KittiMultimodalDataset(Dataset):
         self.augmenter: Optional[PointCloudAugmenter] = PointCloudAugmenter() if augment else None
 
     def _read_index(self) -> List[Dict[str, str]]:
-        index_path = self.crops_dir / "index.csv"
+        index_path = self.crops_dir / self.index_file
         if not index_path.exists():
             raise FileNotFoundError(
                 f"{index_path} not found - run data_pipeline.build_dataset first"

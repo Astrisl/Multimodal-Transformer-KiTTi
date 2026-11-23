@@ -35,6 +35,7 @@ class TorchBackend(InferenceBackend):
     def __init__(self, checkpoint: str, device: str = "cuda", half: bool = False) -> None:
         self.device = device if (device != "cuda" or torch.cuda.is_available()) else "cpu"
         self.model = load_checkpoint(checkpoint, self.device)
+        self.class_names = getattr(self.model, "class_names", None)
         self.half = half and self.device == "cuda"
         if self.half:
             self.model = self.model.half()
@@ -117,7 +118,9 @@ class ObjectClassifier:
 
     def __init__(self, backend: InferenceBackend, class_names: Sequence[str]) -> None:
         self.backend = backend
-        self.class_names = list(class_names)
+        # A checkpoint knows its classes; they win over a possibly outdated config list
+        # (e.g. a model fine-tuned with an extra Background class).
+        self.class_names = list(getattr(backend, "class_names", None) or class_names)
 
     def predict(self, batch: Dict[str, torch.Tensor]) -> List[Prediction]:
         logits = self.backend.logits(batch)

@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from multimodal_transformer.data_pipeline.dataset import KittiMultimodalDataset
 from multimodal_transformer.model.fusion_transformer import (
     ModelConfig,
+    build_model,
     MultimodalFusionTransformer,
     load_checkpoint,
 )
@@ -109,3 +110,19 @@ def test_detection_journal(tmp_path):
     async_journal.close()
     reopened = DetectionJournal(tmp_path / "log.sqlite")
     assert len(reopened.detections(session_id=1)) == 3
+
+
+def test_init_from_checkpoint_adds_a_class(tmp_path):
+    from multimodal_transformer.training.train import init_from_checkpoint
+
+    small = dict(embed_dim=32, nhead=4, num_layers=1, ff_dim=64, pretrained_backbone=False)
+    old = build_model({**small, "num_classes": 3})
+    path = tmp_path / "old.pth"
+    torch.save({"state_dict": old.state_dict()}, path)
+
+    new = build_model({**small, "num_classes": 4})
+    init_from_checkpoint(new, str(path))
+    old_head, new_head = old.head[-1], new.head[-1]
+    torch.testing.assert_close(new_head.weight[:3], old_head.weight)
+    torch.testing.assert_close(new_head.bias[:3], old_head.bias)
+    torch.testing.assert_close(new.head[0].weight, old.head[0].weight)

@@ -9,6 +9,7 @@ roi_extraction:
     x_range: [0.0, 40.0]          # m, region of interest in the LiDAR frame
     y_range: [-20.0, 20.0]
     z_range: [-3.0, 2.0]
+    max_azimuth_deg: 50.0         # half-angle of the sector around +x; 50.0 ~ KITTI camera view
     voxel_size: 0.1               # m, down-sampling before clustering
     ground_distance: 0.2          # m, RANSAC inlier threshold for the ground plane
     ransac_iterations: 60
@@ -33,27 +34,31 @@ multimodal_inference:
     sync_queue_size: 2            # scans waiting for their candidates; small = drop stale
     image_padding: 5
     min_image_brightness: 15.0    # 0..255, darker patches -> LiDAR-only (NFR-05)
-    class_names: [Car, Pedestrian, Cyclist]
+    class_names: [Car, Pedestrian, Cyclist, Background]  # the torch backend reads them from the checkpoint
+    reject_classes: [Background]  # predicted but never published (clutter)
     num_points: 1024
     intensity_scale: 1.0          # 1/255 for Livox reflectivity
     min_points: 5
     min_confidence: 0.5
     backend: torch                # torch | onnxruntime | tensorrt
-    checkpoint: runs/default/best.pth
+    checkpoint: runs/background/best.pth  # 4 classes incl. Background; runs/default/best.pth = 3 classes
     onnx: model.onnx
     engine: model.engine
     device: cuda
-    fp16: true
+    fp16: false                   # full FP16 is ~3.6x slower than FP32 on a GTX 1650 (no tensor cores) and can overflow; use TensorRT FP16 on Jetson
     max_batch: 32
     journal_db: ""                # e.g. journal/detections.sqlite; empty disables logging
     session_location: ""
 
 kitti_player:
   ros__parameters:
-    kitti_split_dir: ""           # <kitti_root>/training
+    kitti_split_dir: ""           # <kitti_root>/training (independent frames)
+    kitti_raw_dir: ""             # <raw>/2011_09_26/2011_09_26_drive_0009_sync (a drive)
     rate_hz: 10.0
     lidar_topic: /lidar/points
     image_topic: /camera/image_raw
+    path_topic: /ego/path         # travelled path (raw drives only)
     lidar_frame: lidar
+    world_frame: world            # TF world -> lidar from GPS/IMU (raw drives only)
     loop: true
     calibration_out: /tmp/kitti_calibration.yaml

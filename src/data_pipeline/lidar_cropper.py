@@ -12,7 +12,19 @@ def crop_points_in_box(points: np.ndarray, box: OrientedBox) -> np.ndarray:
     """Returns the rows of ``points`` ([N, >=3], same frame as ``box``) inside ``box``."""
     if points.shape[0] == 0:
         return points
-    return points[box.contains(points[:, :3])]
+    # Cheap axis-aligned pre-selection first: the exact oriented test is then run on a
+    # few hundred points instead of the whole scan (~120k), with the same result.
+    corners = box.corners()
+    low, high = corners.min(axis=0), corners.max(axis=0)
+    xyz = points[:, :3]
+    near = np.flatnonzero(
+        (xyz[:, 0] >= low[0])
+        & (xyz[:, 0] <= high[0])
+        & (xyz[:, 1] >= low[1])
+        & (xyz[:, 1] <= high[1])
+    )
+    near = near[box.contains(xyz[near])]
+    return points[near]
 
 
 def crop_points_in_camera_box(

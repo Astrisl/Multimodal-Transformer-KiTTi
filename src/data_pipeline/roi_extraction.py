@@ -36,6 +36,9 @@ class RoiConfig:
     x_range: Tuple[float, float] = (0.0, 40.0)
     y_range: Tuple[float, float] = (-20.0, 20.0)
     z_range: Tuple[float, float] = (-3.0, 2.0)
+    # Half-angle of the processed sector around +x (deg); 180 = all around. Limiting it to
+    # the camera's field of view skips clusters that could only be classified by LiDAR.
+    max_azimuth_deg: float = 180.0
     voxel_size: float = 0.1
     ground_distance: float = 0.2
     ransac_iterations: int = 60
@@ -73,6 +76,8 @@ class RoiExtractor:
             & (y >= c.y_range[0]) & (y <= c.y_range[1])
             & (z >= c.z_range[0]) & (z <= c.z_range[1])
         )  # fmt: skip
+        if c.max_azimuth_deg < 180.0:
+            mask &= np.abs(np.degrees(np.arctan2(y, x))) <= c.max_azimuth_deg
         return points[mask]
 
     def voxel_downsample(self, points: np.ndarray) -> np.ndarray:

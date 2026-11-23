@@ -99,9 +99,24 @@ pre-commit install          # black + flake8 перед кожним коміт�
    python -m multimodal_transformer.model.export --checkpoint runs/default/best.pth --onnx model.onnx
    python -m multimodal_transformer.model.export --onnx model.onnx --engine model.engine --fp16
    ```
-7. **Реальний час (ROS 2)**:
+7. **Клас Background** (фон для живого конвеєра). Екстрактор кандидатів знаходить і стовпи,
+   бордюри, кущі; модель на 3 класи впевнено називала б їх Car / Pedestrian. Тим самим
+   екстрактором збираються негативні приклади з кадрів KITTI, і модель донавчається з 4 класами:
    ```bash
-   # програвання KITTI замість сенсорів
+   python -m multimodal_transformer.data_pipeline.mine_background --config dataset.yaml
+   python -m multimodal_transformer.training.train --dataset dataset_background.yaml --model model.yaml --train train_background.yaml
+   ```
+8. **Перевірка на реальній поїздці** KITTI raw (безперервний запис, напр. `2011_09_26_drive_0009`:
+   `*_sync.zip`, `*_tracklets.zip` і `2011_09_26_calib.zip` з сайту KITTI). Той самий конвеєр,
+   що й вузли ROS 2, без ROS: час етапів, звірка з розміткою, відео (камера + вид зверху):
+   ```bash
+   python -m multimodal_transformer.training.drive_demo --drive data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync
+   ```
+9. **Реальний час (ROS 2)**:
+   ```bash
+   # поїздка KITTI raw: автомобіль їде сценою в RViz2 (TF world -> lidar з GPS/IMU)
+   ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py        kitti_raw_dir:=data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync        rviz_config:=config/rviz/kitti_drive.rviz use_slam:=false
+   # окремі кадри KITTI Object замість сенсорів
    ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py kitti_split_dir:=$KITTI_ROOT/training use_slam:=false
    # живі сенсори + FAST-LIO2
    ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py fast_lio_config:=mid360.yaml

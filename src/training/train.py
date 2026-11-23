@@ -32,6 +32,27 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def init_from_checkpoint(model: torch.nn.Module, path: str) -> None:
+    """Starts from a trained checkpoint, also when the new model has more classes.
+
+    Rows of the output layer for classes the checkpoint already knows are copied; rows
+    of new classes (e.g. ``Background``) keep their random initialisation.
+    """
+    source = torch.load(path, map_location="cpu", weights_only=False)["state_dict"]
+    target = model.state_dict()
+    for name, value in source.items():
+        if name not in target:
+            continue
+        if target[name].shape == value.shape:
+            target[name] = value
+        elif target[name].shape[1:] == value.shape[1:] and target[name].shape[0] > value.shape[0]:
+            target[name][: value.shape[0]] = value
+        else:
+            raise ValueError(f"{name}: {tuple(value.shape)} -> {tuple(target[name].shape)}")
+    model.load_state_dict(target)
+    LOGGER.info("Initialised from %s", path)
+
+
 def build_datasets(data_cfg: Dict, num_points: int, augment: bool = True):
     common = dict(
         crops_dir=data_cfg["crops_dir"],
@@ -41,6 +62,7 @@ def build_datasets(data_cfg: Dict, num_points: int, augment: bool = True):
         num_points=num_points,
         intensity_scale=data_cfg.get("intensity_scale", 1.0),
         image_size=data_cfg.get("image_size", 224),
+        index_file=data_cfg.get("index_file", "index.csv"),
     )
     train = KittiMultimodalDataset(split="train", augment=augment, **common)
     val = KittiMultimodalDataset(split="val", augment=False, **common)
@@ -85,8 +107,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     trainer_cfg = TrainerConfig(
         **{k: v for k, v in train_cfg.items() if k in TrainerConfig.__dataclass_fields__}
     )
+    model = build_model(model_cfg)
+    if train_cfg.get("init_checkpoint"):
+        init_from_checkpoint(model, train_cfg["init_checkpoint"])
     trainer = Trainer(
-        build_model(model_cfg), train_loader, val_loader, criterion,
+        model, train_loader, val_loader, criterion,
         data_cfg["class_names"], trainer_cfg, device,
     )  # fmt: skip
     trainer.fit()

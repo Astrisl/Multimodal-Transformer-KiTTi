@@ -11,6 +11,7 @@
 | `kitti_root` | шлях | `${KITTI_ROOT}` | корінь KITTI Object (містить `training/`) |
 | `crops_dir` | шлях | `${KITTI_ROOT}/crops` | куди `build_dataset` пише `images/`, `lidar/`, `index.csv` |
 | `class_names` | список | `[Car, Pedestrian, Cyclist]` | класи моделі; індекс у списку = id мітки |
+| `index_file` | рядок | `index.csv` | індекс кропів; `index_with_background.csv` додає клас Background (`config/dataset_background.yaml`) |
 | `class_map` | словник | див. файл | тип KITTI → клас проєкту; відсутні типи (Tram, Misc, DontCare) пропускаються |
 | `min_points` | int | 5 | об'єкти з меншою кількістю точок в OBB відкидаються |
 | `image_padding` | int | 5 | пікселі контексту навколо проєкції бокса |
@@ -71,6 +72,7 @@
 | :-- | :-- | :-- |
 | `lidar_topic` / `candidates_topic` | `/lidar/points` / `/roi/candidates` | вхід / вихід |
 | `x_range`, `y_range`, `z_range` | `[0,40]`, `[-20,20]`, `[-3,2]` | область інтересу, м, система LiDAR |
+| `max_azimuth_deg` | `180` | півкут сектора навколо осі x, град; `50` ≈ поле зору камери KITTI, менше кандидатів |
 | `voxel_size` | 0.1 | розмір вокселя для проріджування, м |
 | `ground_distance` | 0.2 | поріг інлаєра площини землі (RANSAC), м |
 | `ransac_iterations` | 60 | ітерації RANSAC |
@@ -93,12 +95,13 @@
 | `image_padding` | 5 | пікселі контексту для патча |
 | `min_image_brightness` | 15 | середня яскравість (0..255), нижче — патч вважається відсутнім |
 | `class_names` | `[Car, Pedestrian, Cyclist]` | мають збігатися з навчанням |
+| `reject_classes` | `[Background]` | класи, які не публікуються (фон, знайдений екстрактором кандидатів) |
 | `num_points`, `intensity_scale` | 1024, 1.0 | як у навчанні |
 | `min_points` | 5 | менше точок у боксі — кандидат пропускається |
 | `min_confidence` | 0.5 | мінімальний score для публікації |
 | `backend` | `torch` | `torch`, `onnxruntime` або `tensorrt` |
 | `checkpoint` / `onnx` / `engine` | шляхи | модель для відповідного бекенду |
-| `device`, `fp16` | `cuda`, true | для бекенду `torch` |
+| `device`, `fp16` | `cuda`, false | для бекенду `torch`; повний FP16 на GTX 1650 повільніший за FP32 і може переповнюватися (NaN) |
 | `max_batch` | 32 | макс. об'єктів в одному батчі (≤ max профілю TensorRT) |
 | `journal_db` | `""` | шлях до SQLite-журналу; порожньо — вимкнено |
 | `session_location` | `""` | опис місця сеансу для журналу |
@@ -107,8 +110,11 @@
 
 | Параметр | За замовч. | Призначення |
 | :-- | :-- | :-- |
-| `kitti_split_dir` | `""` | `<kitti_root>/training` |
+| `kitti_split_dir` | `""` | `<kitti_root>/training` (окремі кадри KITTI Object) |
+| `kitti_raw_dir` | `""` | поїздка KITTI raw `<date>/<date>_drive_XXXX_sync`; має пріоритет над `kitti_split_dir` |
 | `rate_hz` | 10.0 | частота публікації |
 | `lidar_frame` | `lidar` | `frame_id` скану |
+| `world_frame` | `world` | батьківський кадр TF `world → lidar` (лише поїздки raw) |
+| `path_topic` | `/ego/path` | пройдений шлях, `nav_msgs/Path` (лише поїздки raw) |
 | `loop` | true | повтор після останнього кадру |
 | `calibration_out` | `/tmp/kitti_calibration.yaml` | куди записати калібрування |

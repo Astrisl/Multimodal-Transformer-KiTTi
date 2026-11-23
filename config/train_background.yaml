@@ -1,0 +1,17 @@
+# Optimisation settings (src/training/train.py).
+seed: 42
+epochs: 4                 # fine-tuning from runs/default/best.pth
+batch_size: 16            # fits a 4 GB GPU (GTX 1650) with AMP
+num_workers: 4
+num_points: 1024
+lr: 0.0001                # lower peak rate: the 3-class model is the starting point
+weight_decay: 0.0001
+grad_clip: 1.0
+amp: true                 # mixed precision on CUDA
+label_smoothing: 0.0
+early_stopping_patience: 5
+# Car / Pedestrian / Cyclist / Background weights of the cross-entropy:
+#   [1.0, 5.0, 10.0] - fixed (v1 setting), "auto" - sqrt inverse frequency, null - none
+class_weights: [1.0, 5.0, 10.0, 1.0]
+output_dir: runs/background
+init_checkpoint: runs/default/best.pth
