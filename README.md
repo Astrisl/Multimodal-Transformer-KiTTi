@@ -115,12 +115,28 @@ pre-commit install          # black + flake8 перед кожним коміт�
 9. **Реальний час (ROS 2)**:
    ```bash
    # поїздка KITTI raw: автомобіль їде сценою в RViz2 (TF world -> lidar з GPS/IMU)
-   ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py        kitti_raw_dir:=data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync        rviz_config:=config/rviz/kitti_drive.rviz use_slam:=false
+   ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py \
+       kitti_raw_dir:=data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync \
+       rviz_config:=config/rviz/kitti_drive.rviz use_slam:=false
    # окремі кадри KITTI Object замість сенсорів
    ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py kitti_split_dir:=$KITTI_ROOT/training use_slam:=false
    # живі сенсори + FAST-LIO2
    ros2 launch src/ros2_nodes/launch/scene_analysis.launch.py fast_lio_config:=mid360.yaml
    ```
+10. **ROS 2 на Windows через WSL2** (Ubuntu 22.04, GPU через WSL, RViz2 через WSLg). Скрипти з
+   `scripts/wsl/` встановлюють ROS 2 Humble, створюють venv з CUDA PyTorch і копіюють поїздки з
+   `data/kitti_raw` у файлову систему Linux, а потім запускають конвеєр з RViz2 і вимірюють
+   частоту `/detected_objects` (результат — `runs/ros2_drive/<поїздка>/`):
+   ```powershell
+   wsl --install -d Ubuntu-22.04
+   wsl -d Ubuntu-22.04 -u root -- bash scripts/wsl/install_ros.sh
+   wsl -d Ubuntu-22.04 -u root -- bash scripts/wsl/setup_project.sh
+   wsl -d Ubuntu-22.04 -u root -- bash scripts/wsl/run_drive.sh 2011_09_26_drive_0009_sync 200
+   # з записом вікна RViz2 у runs/ros2_drive/<поїздка>/rviz.mp4 (віртуальний дисплей Xvfb)
+   wsl -d Ubuntu-22.04 -u root -- env RECORD=1 bash scripts/wsl/run_drive.sh
+   ```
+   На GTX 1650 конвеєр публікує результати з частотою 1,9–2,1 Гц. RViz2 використовує програмний
+   OpenGL, бо з апаратним під WSLg завершується з помилкою.
 
 Усі параметри описані в [docs/configuration.md](docs/configuration.md), топіки й повідомлення — у
 [docs/ros2_api.md](docs/ros2_api.md).

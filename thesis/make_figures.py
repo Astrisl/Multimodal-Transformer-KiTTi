@@ -652,6 +652,30 @@ def fig_drive():
     save(fig, "fig4_drive_background.png")
 
 
+def fig_ros2_rviz():
+    """RViz2 window recorded while the ROS 2 pipeline replays KITTI raw drive 0009."""
+    video = cv2.VideoCapture(str(ROOT / "runs" / "ros2_drive" / "run4" / "rviz_drive_0009.mp4"))
+    video.set(cv2.CAP_PROP_POS_FRAMES, 400)
+    ok, frame = video.read()
+    assert ok, "RViz recording not found"
+    frame = frame[:, :, ::-1]
+    camera = frame[156:251, 10:333]  # RViz2 Camera panel
+    view = frame[72:761, 374:1254]  # RViz2 3D view
+    fig = plt.figure(figsize=(16.5 / 2.54, 19 / 2.54))
+    grid = fig.add_gridspec(2, 1, height_ratios=[camera.shape[0] * 880 / 323, 689], hspace=0.1)
+    for row, (image, title) in enumerate(
+        [
+            (camera, "а) кадр камери (панель Camera)"),
+            (view, "б) скан LiDAR і рамки класифікованих об'єктів"),
+        ]
+    ):
+        ax = fig.add_subplot(grid[row])
+        ax.imshow(image)
+        ax.set_title(title, fontsize=11)
+        ax.axis("off")
+    save(fig, "fig4_ros2_rviz.png")
+
+
 if __name__ == "__main__":
     import sys
 
@@ -675,3 +699,4 @@ if __name__ == "__main__":
     fig_breakdowns()
     fig_speed()
     fig_drive()
+    fig_ros2_rviz()
