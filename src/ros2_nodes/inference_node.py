@@ -78,7 +78,7 @@ PARAMETERS = {
     "use_camera": True,
     "max_sync_dt": 0.05,
     "image_buffer_size": 10,
-    "sync_queue_size": 2,
+    "sync_queue_size": 10,
     "image_padding": 5,
     "min_image_brightness": 15.0,
     "class_names": ["Car", "Pedestrian", "Cyclist"],

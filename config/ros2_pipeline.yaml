@@ -31,7 +31,7 @@ multimodal_inference:
     use_camera: true
     max_sync_dt: 0.05             # s, max LiDAR-camera stamp difference
     image_buffer_size: 10
-    sync_queue_size: 2            # scans waiting for their candidates; small = drop stale
+    sync_queue_size: 10           # scans waiting for their candidates; must cover ROI latency
     image_padding: 5
     min_image_brightness: 15.0    # 0..255, darker patches -> LiDAR-only (NFR-05)
     class_names: [Car, Pedestrian, Cyclist, Background]  # the torch backend reads them from the checkpoint
