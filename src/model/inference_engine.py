@@ -55,9 +55,13 @@ class OnnxRuntimeBackend(InferenceBackend):
     def __init__(self, onnx_path: str, providers: Sequence[str] = ()) -> None:
         import onnxruntime as ort  # noqa: PLC0415 - optional dependency
 
+        if hasattr(ort, "preload_dlls"):
+            # onnxruntime-gpu on Windows finds CUDA/cuDNN through the DLLs PyTorch ships.
+            ort.preload_dlls()
         self.session = ort.InferenceSession(
             onnx_path, providers=list(providers) or ort.get_available_providers()
         )
+        self.providers = self.session.get_providers()
 
     def logits(self, batch: Dict[str, torch.Tensor]) -> np.ndarray:
         feeds = {k: batch[k].numpy().astype(np.float32) for k in ("image", "points", "image_valid")}
@@ -82,23 +86,46 @@ class TensorRTBackend(InferenceBackend):
             raise RuntimeError(f"Could not deserialize TensorRT engine {engine_path}")
         self.context = self.engine.create_execution_context()
         self.num_classes = num_classes
+        # A stream of its own (TensorRT syncs extra on the default stream); before each run
+        # it waits for PyTorch's stream, where the inputs are copied to the GPU.
         self.stream = torch.cuda.Stream()
+        # Largest batch of the optimisation profile; bigger batches are run in chunks
+        # (on a 4 GB GPU the engine is built for small batches, see export.py).
+        self.max_batch = int(self.engine.get_tensor_profile_shape("points", 0)[2][0])
+        # The engine's own input precision (an ONNX exported in FP16 has FP16 inputs).
+        self.dtypes = {
+            name: (
+                torch.float16
+                if self.engine.get_tensor_dtype(name) == trt.DataType.HALF
+                else torch.float32
+            )
+            for name in ("image", "points", "image_valid", "logits")
+        }
 
     def logits(self, batch: Dict[str, torch.Tensor]) -> np.ndarray:
+        size = batch["points"].shape[0]
+        outputs = [
+            self._run({k: v[i : i + self.max_batch] for k, v in batch.items()})
+            for i in range(0, size, self.max_batch)
+        ]
+        return torch.cat(outputs).float().cpu().numpy()
+
+    def _run(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         inputs = {
-            name: batch[name].to("cuda", torch.float32).contiguous()
+            name: batch[name].to("cuda", self.dtypes[name]).contiguous()
             for name in ("image", "points", "image_valid")
         }
         size = inputs["points"].shape[0]
-        output = torch.empty(size, self.num_classes, device="cuda", dtype=torch.float32)
+        output = torch.empty(size, self.num_classes, device="cuda", dtype=self.dtypes["logits"])
         for name, tensor in inputs.items():
             self.context.set_input_shape(name, tuple(tensor.shape))
             self.context.set_tensor_address(name, tensor.data_ptr())
         self.context.set_tensor_address("logits", output.data_ptr())
+        self.stream.wait_stream(torch.cuda.current_stream())
         if not self.context.execute_async_v3(self.stream.cuda_stream):
             raise RuntimeError("TensorRT execution failed")
         self.stream.synchronize()
-        return output.cpu().numpy()
+        return output
 
 
 def create_backend(cfg: Dict, num_classes: int) -> InferenceBackend:
@@ -107,7 +134,7 @@ def create_backend(cfg: Dict, num_classes: int) -> InferenceBackend:
     if kind == "torch":
         return TorchBackend(cfg["checkpoint"], cfg.get("device", "cuda"), cfg.get("fp16", False))
     if kind == "onnxruntime":
-        return OnnxRuntimeBackend(cfg["onnx"])
+        return OnnxRuntimeBackend(cfg["onnx"], cfg.get("onnx_providers", ()))
     if kind == "tensorrt":
         return TensorRTBackend(cfg["engine"], num_classes)
     raise ValueError(f"Unknown inference backend: {kind}")

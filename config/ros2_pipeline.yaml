@@ -36,7 +36,7 @@ multimodal_inference:
     min_image_brightness: 15.0    # 0..255, darker patches -> LiDAR-only (NFR-05)
     class_names: [Car, Pedestrian, Cyclist, Background]  # the torch backend reads them from the checkpoint
     reject_classes: [Background]  # predicted but never published (clutter)
-    num_points: 1024
+    num_points: 512               # point tokens per object (trained on 1024; 512 makes the model 1.9x faster)
     intensity_scale: 1.0          # 1/255 for Livox reflectivity
     min_points: 5
     min_confidence: 0.5

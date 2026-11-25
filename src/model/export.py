@@ -40,17 +40,24 @@ def export_onnx(
     num_points: int = 1024,
     image_size: int = 224,
     opset: int = 17,
+    half: bool = False,
 ) -> Path:
     """Exports ``model`` with a dynamic batch dimension.
 
     ``image_valid`` is exported as float32 (0/1) rather than bool because float inputs
     are supported by every TensorRT / ONNX Runtime version we target.
+
+    With ``half`` the graph, its inputs and output are FP16 (traced on the GPU). TensorRT
+    10.12+ builds such a strongly typed network with FP16 kernels; it is the only way to
+    get FP16 in TensorRT 11, which no longer has the FP16 builder flag.
     """
-    model = model.eval().cpu()
+    device = "cuda" if half else "cpu"
+    dtype = torch.float16 if half else torch.float32
+    model = model.eval().to(device, dtype)
     dummy = (
-        torch.randn(2, 3, image_size, image_size),
-        torch.randn(2, num_points, model.config.point_features),
-        torch.ones(2),
+        torch.randn(2, 3, image_size, image_size, device=device, dtype=dtype),
+        torch.randn(2, num_points, model.config.point_features, device=device, dtype=dtype),
+        torch.ones(2, device=device, dtype=dtype),
     )
     dynamic = {name: {0: "batch"} for name in INPUT_NAMES + OUTPUT_NAMES}
     torch.onnx.export(
@@ -75,6 +82,7 @@ def build_tensorrt_engine(
     num_points: int = 1024,
     image_size: int = 224,
     workspace_gb: float = 1.0,
+    opt_batch: int = 8,
 ) -> Path:
     """Builds a serialized TensorRT engine (TensorRT >= 8.6 Python API).
 
@@ -95,11 +103,13 @@ def build_tensorrt_engine(
 
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_gb * (1 << 30)))
-    if fp16:
+    if fp16 and hasattr(trt.BuilderFlag, "FP16"):
         config.set_flag(trt.BuilderFlag.FP16)
+    elif fp16:
+        LOGGER.warning("TensorRT %s has no FP16 flag: export the ONNX with --half", trt.__version__)
 
     profile = builder.create_optimization_profile()
-    opt_batch = min(8, max_batch)
+    opt_batch = min(opt_batch, max_batch)
     shapes = {
         "image": lambda b: (b, 3, image_size, image_size),
         "points": lambda b: (b, num_points, 4),
@@ -123,13 +133,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--onnx", required=True, help="ONNX path (written or read)")
     parser.add_argument("--engine", help="TensorRT engine output path")
     parser.add_argument("--fp16", action="store_true", help="enable FP16 kernels")
+    parser.add_argument("--half", action="store_true", help="export the ONNX graph in FP16")
     parser.add_argument("--max-batch", type=int, default=32)
+    parser.add_argument("--opt-batch", type=int, default=8, help="batch TensorRT tunes kernels for")
     args = parser.parse_args(argv)
 
     if args.checkpoint:
-        export_onnx(load_checkpoint(args.checkpoint), args.onnx)
+        export_onnx(load_checkpoint(args.checkpoint), args.onnx, half=args.half)
     if args.engine:
-        build_tensorrt_engine(args.onnx, args.engine, fp16=args.fp16, max_batch=args.max_batch)
+        build_tensorrt_engine(
+            args.onnx,
+            args.engine,
+            fp16=args.fp16,
+            max_batch=args.max_batch,
+            opt_batch=args.opt_batch,
+        )
 
 
 if __name__ == "__main__":

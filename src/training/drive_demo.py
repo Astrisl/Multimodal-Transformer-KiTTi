@@ -280,6 +280,12 @@ def evaluate_drive(args) -> Dict:
         inf["checkpoint"] = args.checkpoint
     inf["backend"] = args.backend
     inf["device"] = args.device
+    if args.onnx:
+        inf["onnx"] = args.onnx
+    if args.engine:
+        inf["engine"] = args.engine
+    if args.num_points:
+        inf["num_points"] = args.num_points
     min_conf = args.min_confidence if args.min_confidence is not None else inf["min_confidence"]
 
     drive = KittiRawDrive(args.drive)
@@ -414,7 +420,10 @@ def main() -> None:
     ap.add_argument("--drive", required=True, help="<raw>/<date>/<date>_drive_XXXX_sync")
     ap.add_argument("--config", default="config/ros2_pipeline.yaml")
     ap.add_argument("--checkpoint", default=None)
-    ap.add_argument("--backend", default="torch", choices=["torch", "onnxruntime"])
+    ap.add_argument("--backend", default="torch", choices=["torch", "onnxruntime", "tensorrt"])
+    ap.add_argument("--onnx", default=None, help="ONNX model for --backend onnxruntime")
+    ap.add_argument("--engine", default=None, help="TensorRT engine for --backend tensorrt")
+    ap.add_argument("--num-points", type=int, default=None, help="point tokens per object")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--output-dir", default="runs/default/drive_demo")
     ap.add_argument("--min-confidence", type=float, default=None)

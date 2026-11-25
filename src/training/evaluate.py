@@ -69,6 +69,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--dataset", default="dataset.yaml")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--output", help="write the JSON report here")
+    parser.add_argument(
+        "--num-points",
+        type=int,
+        default=1024,
+        help="point tokens per object (the model has no positional encoding, so fewer "
+        "tokens than in training only change the sampling)",
+    )
     args = parser.parse_args(argv)
 
     data_cfg = load_yaml(args.dataset)
@@ -76,12 +83,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     model = load_checkpoint(args.checkpoint, str(device))
     class_names = model.class_names or data_cfg["class_names"]
 
-    _, val_ds = build_datasets(data_cfg, num_points=1024, augment=False)
+    _, val_ds = build_datasets(data_cfg, num_points=args.num_points, augment=False)
     loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=4)
 
     fused = evaluate(model, loader, device, class_names)
     lidar_only = evaluate(model, loader, device, class_names, drop_image=True)
-    latency = benchmark_latency(model, device)
+    latency = benchmark_latency(model, device, num_points=args.num_points)
 
     print("=== LiDAR + camera ===\n" + fused.to_text())
     print("=== LiDAR only (camera masked, NFR-05) ===\n" + lidar_only.to_text())
@@ -92,6 +99,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "lidar_only": lidar_only.as_dict(),
         "confusion_fused": fused.confusion.tolist(),
         "device": str(device),
+        "num_points": args.num_points,
         **latency,
     }
     if args.output:

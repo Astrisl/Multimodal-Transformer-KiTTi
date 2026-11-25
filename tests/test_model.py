@@ -88,6 +88,19 @@ def test_token_count():
     assert IMAGE_TOKENS == 49
 
 
+def test_model_runs_on_fewer_point_tokens(model):
+    """No positional encoding, so the point-token count is free at inference (256 tokens
+    make attention ~10x cheaper). It is not neutral: the share of attention that point
+    tokens get against image and CLS tokens grows with their count, which is why the
+    quality with fewer tokens has to be measured (evaluate.py --num-points)."""
+    image, points, valid = random_batch(2, points=256)
+    out_256 = model(image, points, valid)
+    assert out_256.shape == (2, 3) and torch.isfinite(out_256).all()
+    # The LiDAR-only path ignores the image whatever the point count.
+    no_image = torch.zeros(2)
+    torch.testing.assert_close(model(image, points, no_image), model(image * 10, points, no_image))
+
+
 def test_onnx_export_matches_pytorch(model, tmp_path):
     pytest.importorskip("onnx")
     ort = pytest.importorskip("onnxruntime")
