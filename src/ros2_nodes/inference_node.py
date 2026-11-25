@@ -46,7 +46,7 @@ from vision_msgs.msg import Detection3DArray
 from visualization_msgs.msg import MarkerArray
 
 from multimodal_transformer.data_pipeline.image_cropper import box_to_image_roi, crop_image
-from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_box
+from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_boxes
 from multimodal_transformer.data_pipeline.normalization import PointCloudNormalizer
 from multimodal_transformer.data_pipeline.sample_builder import (
     MultimodalSampleBuilder,
@@ -207,9 +207,9 @@ class InferenceNode(Node):
             self.stats["lidar_only_frames"] += 1
 
         boxes, patches, clouds = [], [], []
-        for det in candidates.detections:
-            box, yaw, size = detection_to_box(det)
-            points = crop_points_in_box(scan, box)
+        parsed = [detection_to_box(det) for det in candidates.detections]
+        crops = crop_points_in_boxes(scan, [box for box, _, _ in parsed])
+        for (box, yaw, size), points in zip(parsed, crops):
             if points.shape[0] < self.p["min_points"]:
                 continue
             patch = None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import List, Sequence
+
 import numpy as np
 
 from multimodal_transformer.utils.calibration import Calibration
@@ -25,6 +27,30 @@ def crop_points_in_box(points: np.ndarray, box: OrientedBox) -> np.ndarray:
     )
     near = near[box.contains(xyz[near])]
     return points[near]
+
+
+def crop_points_in_boxes(points: np.ndarray, boxes: Sequence[OrientedBox]) -> List[np.ndarray]:
+    """:func:`crop_points_in_box` for many boxes of one scan, with identical results.
+
+    The scan is sorted by x once; each box then tests only the slice of points within its
+    x extent (found by binary search) instead of scanning all ~120k points per box.
+    """
+    if points.shape[0] == 0 or not boxes:
+        return [points[:0] for _ in boxes]
+    order = np.argsort(points[:, 0], kind="stable")
+    xs = points[order, 0]
+    crops = []
+    for box in boxes:
+        corners = box.corners()
+        low, high = corners.min(axis=0), corners.max(axis=0)
+        start = np.searchsorted(xs, low[0], side="left")
+        stop = np.searchsorted(xs, high[0], side="right")
+        near = order[start:stop]
+        y = points[near, 1]
+        near = near[(y >= low[1]) & (y <= high[1])]
+        near = near[box.contains(points[near, :3])]
+        crops.append(points[np.sort(near)])  # original row order, as crop_points_in_box
+    return crops
 
 
 def crop_points_in_camera_box(

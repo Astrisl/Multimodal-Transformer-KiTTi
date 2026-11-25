@@ -8,13 +8,18 @@ import torch
 
 from multimodal_transformer.data_pipeline.dataset import KittiMultimodalDataset, split_by_scene
 from multimodal_transformer.data_pipeline.kitti_reader import KittiFrame, ObjectLabel
-from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_camera_box
+from multimodal_transformer.data_pipeline.lidar_cropper import (
+    crop_points_in_box,
+    crop_points_in_boxes,
+    crop_points_in_camera_box,
+)
 from multimodal_transformer.data_pipeline.normalization import PointCloudNormalizer
 from multimodal_transformer.data_pipeline.sample_builder import (
     MultimodalSampleBuilder,
     build_image_transform,
     to_rgb,
 )
+from multimodal_transformer.utils.geometry import OrientedBox
 
 CLASSES = ["Car", "Pedestrian", "Cyclist"]
 
@@ -118,6 +123,28 @@ def test_dark_image_is_treated_as_missing():
     assert builder.build(None, pts)["image"].abs().sum() == 0
     batch = builder.build_batch([bright, None], [pts, pts])
     assert batch["image"].shape == (2, 3, 224, 224) and batch["image_valid"].tolist() == [1, 0]
+
+
+def test_batched_images_match_single_transform():
+    builder = MultimodalSampleBuilder(PointCloudNormalizer(64, seed=0), build_image_transform())
+    rng = np.random.default_rng(1)
+    patches = [rng.integers(0, 255, (h, w, 3), dtype=np.uint8) for h, w in [(30, 50), (90, 40)]]
+    pts = rng.normal(size=(50, 4))
+    batch = builder.build_batch(patches, [pts, pts])
+    for i, patch in enumerate(patches):
+        torch.testing.assert_close(batch["image"][i], builder.build(patch, pts)["image"])
+
+
+def test_batched_box_crop_matches_single_crop():
+    rng = np.random.default_rng(2)
+    scan = np.c_[rng.uniform(-20, 20, (20000, 3)), rng.uniform(0, 1, 20000)]
+    boxes = [
+        OrientedBox.from_lidar(rng.uniform(-15, 15, 3), rng.uniform(0.5, 5, 3), rng.uniform(-3, 3))
+        for _ in range(20)
+    ]
+    for box, crop in zip(boxes, crop_points_in_boxes(scan, boxes)):
+        np.testing.assert_array_equal(crop, crop_points_in_box(scan, box))
+    assert crop_points_in_boxes(scan[:0], boxes[:2])[0].shape == (0, 4)
 
 
 def test_ir_frames_become_three_channel():

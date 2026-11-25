@@ -19,6 +19,7 @@ Boxes are expressed in the LiDAR frame (x forward, y left, z up).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -26,6 +27,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_box
 from multimodal_transformer.utils.geometry import OrientedBox
 
 
@@ -52,12 +54,23 @@ class RoiConfig:
 
 @dataclass
 class ObjectCandidate:
-    """A cluster with its oriented box (LiDAR frame) and its *full-resolution* points."""
+    """A cluster with its oriented box (LiDAR frame); ``points`` are its full-resolution
+    points, cropped on first access (the live pipeline re-crops the scan itself, so the
+    ROI node never pays for them)."""
 
     box: OrientedBox
     yaw: float
     size_lwh: np.ndarray
-    points: np.ndarray = field(repr=False)
+    region: np.ndarray = field(repr=False)
+
+    @cached_property
+    def points(self) -> np.ndarray:
+        # Re-crop the *non-downsampled* region so the classifier gets full density
+        # (training crops were not voxelised either). A small margin compensates for
+        # the box being fitted on the voxelised cloud. Like a KITTI label box, the
+        # crop also contains the few ground points under the object.
+        margin_box = OrientedBox(self.box.center, self.box.rotation, self.box.half_extents + 0.05)
+        return crop_points_in_box(self.region, margin_box)
 
 
 class RoiExtractor:
@@ -85,7 +98,11 @@ class RoiExtractor:
         if points.shape[0] == 0 or self.cfg.voxel_size <= 0:
             return points
         keys = np.floor(points[:, :3] / self.cfg.voxel_size).astype(np.int64)
-        _, first = np.unique(keys, axis=0, return_index=True)
+        # One integer per voxel: np.unique on a 1-D key is ~10x faster than on rows.
+        keys -= keys.min(axis=0)
+        dims = keys.max(axis=0) + 1
+        flat = (keys[:, 0] * dims[1] + keys[:, 1]) * dims[2] + keys[:, 2]
+        _, first = np.unique(flat, return_index=True)
         return points[np.sort(first)]
 
     def ground_mask(self, points: np.ndarray) -> Tuple[np.ndarray, Optional[np.ndarray]]:
@@ -105,20 +122,29 @@ class RoiExtractor:
             return best, best_plane
         xyz = points[:, :3]
         cos_limit = np.cos(np.deg2rad(self.cfg.max_ground_tilt_deg))
-        for _ in range(self.cfg.ransac_iterations):
-            p0, p1, p2 = xyz[self._rng.choice(n, 3, replace=False)]
-            normal = np.cross(p1 - p0, p2 - p0)
-            norm = np.linalg.norm(normal)
-            if norm < 1e-6:
-                continue
-            normal /= norm
-            if abs(normal[2]) < cos_limit:
-                continue
-            inliers = np.abs((xyz - p0) @ normal) < self.cfg.ground_distance
-            if inliers.sum() > best.sum():
-                best = inliers
-                normal = normal if normal[2] > 0 else -normal
-                best_plane = np.append(normal, -normal @ p0)
+        # All hypotheses are drawn first (same random sequence as one-by-one) and scored
+        # with one matrix product instead of a Python loop over the iterations.
+        samples = np.array(
+            [self._rng.choice(n, 3, replace=False) for _ in range(self.cfg.ransac_iterations)]
+        )
+        p0, p1, p2 = xyz[samples[:, 0]], xyz[samples[:, 1]], xyz[samples[:, 2]]
+        normals = np.cross(p1 - p0, p2 - p0)
+        norms = np.linalg.norm(normals, axis=1)
+        keep = norms >= 1e-6
+        normals, p0 = normals[keep] / norms[keep, None], p0[keep]
+        keep = np.abs(normals[:, 2]) >= cos_limit
+        normals, p0 = normals[keep], p0[keep]
+        if len(normals) == 0:
+            return best, best_plane
+        offsets = np.einsum("ij,ij->i", p0, normals)
+        counts = (np.abs(xyz @ normals.T - offsets) < self.cfg.ground_distance).sum(axis=0)
+        k = int(np.argmax(counts))  # first of the best, as with a strict ">" in a loop
+        if counts[k] == 0:
+            return best, best_plane
+        normal = normals[k]
+        best = np.abs((xyz - p0[k]) @ normal) < self.cfg.ground_distance
+        normal = normal if normal[2] > 0 else -normal
+        best_plane = np.append(normal, -normal @ p0[k])
         return best, best_plane
 
     def cluster(self, points: np.ndarray) -> List[np.ndarray]:
@@ -201,11 +227,5 @@ class RoiExtractor:
             dims = np.array([horiz[0], horiz[1], size[2]])
             if np.any(dims > max_size) or np.all(dims < min_size):
                 continue
-            # Re-crop the *non-downsampled* region so the classifier gets full density
-            # (training crops were not voxelised either). A small margin compensates for
-            # the box being fitted on the voxelised cloud. Like a KITTI label box, the
-            # crop now also contains the few ground points under the object.
-            margin_box = OrientedBox(box.center, box.rotation, box.half_extents + 0.05)
-            full_points = region[margin_box.contains(region[:, :3])]
-            candidates.append(ObjectCandidate(box=box, yaw=yaw, size_lwh=size, points=full_points))
+            candidates.append(ObjectCandidate(box=box, yaw=yaw, size_lwh=size, region=region))
         return candidates

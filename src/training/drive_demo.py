@@ -32,7 +32,7 @@ import yaml
 
 from multimodal_transformer.data_pipeline.image_cropper import box_to_image_roi, crop_image
 from multimodal_transformer.data_pipeline.kitti_raw import KittiRawDrive, Tracklet
-from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_box
+from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_boxes
 from multimodal_transformer.data_pipeline.normalization import PointCloudNormalizer
 from multimodal_transformer.data_pipeline.roi_extraction import RoiConfig, RoiExtractor
 from multimodal_transformer.data_pipeline.sample_builder import (
@@ -111,8 +111,8 @@ class DrivePipeline:
         t1 = time.perf_counter()
 
         boxes, patches, clouds = [], [], []
-        for cand in candidates:
-            points = crop_points_in_box(scan, cand.box)
+        crops = crop_points_in_boxes(scan, [cand.box for cand in candidates])
+        for cand, points in zip(candidates, crops):
             if points.shape[0] < self.p["min_points"]:
                 continue
             patch = None
