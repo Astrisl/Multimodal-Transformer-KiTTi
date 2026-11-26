@@ -62,6 +62,7 @@ class ObjectCandidate:
     yaw: float
     size_lwh: np.ndarray
     region: np.ndarray = field(repr=False)
+    source: str = "cluster"  # "image" for candidates found through a 2D detection
 
     @cached_property
     def points(self) -> np.ndarray:
@@ -71,6 +72,15 @@ class ObjectCandidate:
         # crop also contains the few ground points under the object.
         margin_box = OrientedBox(self.box.center, self.box.rotation, self.box.half_extents + 0.05)
         return crop_points_in_box(self.region, margin_box)
+
+
+@dataclass
+class Scene:
+    """What :meth:`RoiExtractor.analyse` learns about one scan."""
+
+    region: np.ndarray = field(repr=False)  # full-resolution points of the processed region
+    plane: Optional[np.ndarray]  # ground plane (a, b, c, d), c > 0, or None
+    candidates: List[ObjectCandidate]
 
 
 class RoiExtractor:
@@ -193,7 +203,7 @@ class RoiExtractor:
         return OrientedBox.from_lidar(center, size, yaw), yaw, size
 
     @staticmethod
-    def _extend_to_ground(
+    def extend_to_ground(
         box: OrientedBox, size: np.ndarray, plane: np.ndarray
     ) -> Tuple[OrientedBox, np.ndarray]:
         """Lowers the box bottom to the ground height below the box centre."""
@@ -210,6 +220,11 @@ class RoiExtractor:
     # ------------------------------------------------------------- pipeline
     def extract(self, scan: np.ndarray) -> List[ObjectCandidate]:
         """Runs the full pipeline on a scan [N, >=3]."""
+        return self.analyse(scan).candidates
+
+    def analyse(self, scan: np.ndarray) -> Scene:
+        """:meth:`extract` that also returns the cropped region and the ground plane
+        (used by the image-guided candidates, see ``image_candidates.py``)."""
         region = self.crop_region(scan)
         sparse = self.voxel_downsample(region)
         ground, plane = self.ground_mask(sparse)
@@ -220,7 +235,7 @@ class RoiExtractor:
         for idx in self.cluster(objects):
             box, yaw, size = self.fit_obb(objects[idx])
             if plane is not None:
-                box, size = self._extend_to_ground(box, size, plane)
+                box, size = self.extend_to_ground(box, size, plane)
             # Compare sorted horizontal extents so the check is independent of which
             # side PCA called "length".
             horiz = np.sort(size[:2])[::-1]
@@ -228,4 +243,4 @@ class RoiExtractor:
             if np.any(dims > max_size) or np.all(dims < min_size):
                 continue
             candidates.append(ObjectCandidate(box=box, yaw=yaw, size_lwh=size, region=region))
-        return candidates
+        return Scene(region=region, plane=plane, candidates=candidates)

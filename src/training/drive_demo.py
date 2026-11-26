@@ -30,6 +30,11 @@ import cv2
 import numpy as np
 import yaml
 
+from multimodal_transformer.data_pipeline.image_candidates import (
+    PersonDetector,
+    duplicate_losers,
+    frustum_candidates,
+)
 from multimodal_transformer.data_pipeline.image_cropper import box_to_image_roi, crop_image
 from multimodal_transformer.data_pipeline.kitti_raw import KittiRawDrive, Tracklet
 from multimodal_transformer.data_pipeline.lidar_cropper import crop_points_in_boxes
@@ -46,6 +51,7 @@ from multimodal_transformer.model.inference_engine import (
 )
 from multimodal_transformer.utils.calibration import Calibration
 from multimodal_transformer.utils.geometry import OrientedBox, box_edges
+from multimodal_transformer.utils.tracking import ClassVotingTracker
 
 CLASSES = ("Car", "Pedestrian", "Cyclist")
 # Annotated types the classifier was not trained on; a prediction on them is neither
@@ -62,9 +68,15 @@ class Detection:
     pred: Prediction
     in_camera: bool
     gt_type: Optional[str] = None  # annotated type of the matched tracklet
+    source: str = "cluster"  # "image": candidate found through a 2D detection
+    confirmed: bool = True  # False while its track is younger than the tracker's min_hits
 
     def published(self, min_conf: float) -> bool:
-        return self.pred.confidence >= min_conf and self.pred.class_name not in REJECTED
+        return (
+            self.confirmed
+            and self.pred.confidence >= min_conf
+            and self.pred.class_name not in REJECTED
+        )
 
 
 @dataclass
@@ -80,7 +92,13 @@ class GroundTruth:
 class DrivePipeline:
     """The ROI extraction + inference node logic for one scan (no ROS)."""
 
-    def __init__(self, params: Dict, calibration: Calibration) -> None:
+    def __init__(
+        self,
+        params: Dict,
+        calibration: Calibration,
+        image_candidates: bool = False,
+        person_score: float = 0.3,
+    ) -> None:
         roi = {k: v for k, v in params["roi_extraction"].items() if hasattr(RoiConfig, k)}
         roi = {k: tuple(v) if isinstance(v, list) else v for k, v in roi.items()}
         self.extractor = RoiExtractor(RoiConfig(**roi))
@@ -95,6 +113,10 @@ class DrivePipeline:
         self.classifier = ObjectClassifier(
             create_backend(p, len(p["class_names"])), p["class_names"]
         )
+        # People are also looked for in the image (clustering merges them with walls).
+        self.detector = (
+            PersonDetector(p.get("device", "cuda"), person_score) if image_candidates else None
+        )
 
     def in_camera(self, box: OrientedBox, image_shape: Tuple[int, int]) -> bool:
         center = self.calibration.lidar_to_rect(box.center[None])
@@ -107,14 +129,20 @@ class DrivePipeline:
     def run(self, scan: np.ndarray, image_rgb: Optional[np.ndarray]):
         """Returns (all classified candidates incl. low confidence, stage times in ms)."""
         t0 = time.perf_counter()
-        candidates = self.extractor.extract(scan)
+        scene = self.extractor.analyse(scan)
+        candidates = scene.candidates
         t1 = time.perf_counter()
+        if self.detector is not None and image_rgb is not None:
+            people = self.detector(image_rgb)
+            candidates = candidates + frustum_candidates(scene, people, self.calibration)
+        image_s = time.perf_counter() - t1
 
-        boxes, patches, clouds = [], [], []
+        boxes, patches, clouds, kept = [], [], [], []
         crops = crop_points_in_boxes(scan, [cand.box for cand in candidates])
         for cand, points in zip(candidates, crops):
             if points.shape[0] < self.p["min_points"]:
                 continue
+            kept.append(cand)
             patch = None
             if image_rgb is not None:
                 roi = box_to_image_roi(
@@ -143,12 +171,16 @@ class DrivePipeline:
 
         shape = image_rgb.shape[:2] if image_rgb is not None else (375, 1242)
         detections = [
-            Detection(box, pred, self.in_camera(box, shape))
-            for box, pred in zip(boxes, predictions)
+            Detection(box, pred, self.in_camera(box, shape), source=cand.source)
+            for box, pred, cand in zip(boxes, predictions, kept)
         ]
+        if self.detector is not None:
+            losers = set(duplicate_losers(kept, [p.class_name for p in predictions], REJECTED))
+            detections = [d for i, d in enumerate(detections) if i not in losers]
         times = {
             "roi_ms": 1000 * (t1 - t0),
-            "prep_ms": 1000 * (t2 - t1 - model_s),
+            "image_ms": 1000 * image_s,
+            "prep_ms": 1000 * (t2 - t1 - image_s - model_s),
             "model_ms": 1000 * model_s,
             "total_ms": 1000 * (t2 - t0),
         }
@@ -286,10 +318,14 @@ def evaluate_drive(args) -> Dict:
         inf["engine"] = args.engine
     if args.num_points:
         inf["num_points"] = args.num_points
+    if args.intensity_scale is not None:
+        inf["intensity_scale"] = args.intensity_scale
     min_conf = args.min_confidence if args.min_confidence is not None else inf["min_confidence"]
 
     drive = KittiRawDrive(args.drive)
-    pipe = DrivePipeline(params, drive.calibration)
+    pipe = DrivePipeline(params, drive.calibration, args.image_candidates, args.person_score)
+    tracker = ClassVotingTracker(min_hits=args.track_min_hits) if args.track else None
+    names = pipe.classifier.class_names
     tracklets = drive.tracklets()
     out_dir = Path(args.output_dir) / drive.drive_dir.name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +341,19 @@ def evaluate_drive(args) -> Dict:
         image_bgr = drive.image_bgr(i)
         image_rgb = None if args.lidar_only else image_bgr[:, :, ::-1].copy()
         detections, times = pipe.run(scan, image_rgb)
+        if tracker is not None and detections:
+            pose = drive.lidar_poses[i] if drive.lidar_poses is not None else None
+            tracked = tracker.update(
+                np.array([d.box.center for d in detections]),
+                np.array([d.pred.probabilities for d in detections]),
+                pose,
+            )
+            for det, state in zip(detections, tracked):
+                best = int(np.argmax(state.probabilities))
+                det.pred = Prediction(
+                    best, names[best], float(state.probabilities[best]), state.probabilities
+                )
+                det.confirmed = state.confirmed
         gts = ground_truth(tracklets, i, scan, pipe, image_bgr.shape[:2])
         match(detections, gts)
 
@@ -330,6 +379,7 @@ def evaluate_drive(args) -> Dict:
             {
                 "frame": i,
                 "candidates": len(detections),
+                "from_image": sum(d.source == "image" for d in detections),
                 "published": len(published),
                 **{k: round(v, 2) for k, v in times.items()},
             }
@@ -366,9 +416,10 @@ def evaluate_drive(args) -> Dict:
             "mean": round(float(np.mean([r[key] for r in timed])), 1),
             "p95": round(float(np.percentile([r[key] for r in timed], 95)), 1),
         }
-        for key in ("roi_ms", "prep_ms", "model_ms", "total_ms")
+        for key in ("roi_ms", "image_ms", "prep_ms", "model_ms", "total_ms")
     }
     timing["candidates_mean"] = round(float(np.mean([r["candidates"] for r in rows])), 1)
+    timing["from_image_mean"] = round(float(np.mean([r["from_image"] for r in rows])), 2)
     timing["fps"] = round(1000.0 / timing["total_ms"]["mean"], 1)
 
     recall = {
@@ -392,6 +443,8 @@ def evaluate_drive(args) -> Dict:
         "drive": drive.drive_dir.name,
         "frames": len(rows),
         "camera": not args.lidar_only,
+        "image_candidates": args.image_candidates,
+        "tracking": args.track,
         "backend": f"{args.backend}/{args.device}",
         "min_confidence": min_conf,
         "timing": timing,
@@ -424,6 +477,12 @@ def main() -> None:
     ap.add_argument("--onnx", default=None, help="ONNX model for --backend onnxruntime")
     ap.add_argument("--engine", default=None, help="TensorRT engine for --backend tensorrt")
     ap.add_argument("--num-points", type=int, default=None, help="point tokens per object")
+    ap.add_argument(
+        "--intensity-scale",
+        type=float,
+        default=None,
+        help="0 for a model trained without LiDAR intensity",
+    )
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--output-dir", default="runs/default/drive_demo")
     ap.add_argument("--min-confidence", type=float, default=None)
@@ -434,6 +493,18 @@ def main() -> None:
         help="annotated objects with fewer LiDAR points are not counted",
     )
     ap.add_argument("--lidar-only", action="store_true", help="classify without the camera")
+    ap.add_argument(
+        "--image-candidates",
+        action="store_true",
+        help="also take candidates from 2D person detections (frustum points)",
+    )
+    ap.add_argument(
+        "--person-score", type=float, default=0.3, help="score threshold of the 2D detector"
+    )
+    ap.add_argument("--track", action="store_true", help="track objects and vote for the class")
+    ap.add_argument(
+        "--track-min-hits", type=int, default=2, help="frames before a track is published"
+    )
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--fps", type=float, default=10.0)
     ap.add_argument("--max-frames", type=int, default=None)

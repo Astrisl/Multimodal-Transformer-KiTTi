@@ -112,6 +112,17 @@ pre-commit install          # black + flake8 перед кожним коміт�
    ```bash
    python -m multimodal_transformer.training.drive_demo --drive data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync
    ```
+   Додаткові прапорці: `--image-candidates` додає кандидатів за зображенням (детектор людей
+   Faster R-CNN MobileNetV3 з torchvision, ваги COCO завантажуються в `TORCH_HOME`), `--track` вмикає
+   трекер із голосуванням за клас. З ними знаходиться 95 % і 63 % пішоходів на поїздках 0005 і 0009
+   (кластеризація сама – 21 % і 16 %), хибних міток 2,4–3,0 на кадр замість 3,3–3,8; частота на
+   GTX 1650 – 3,6–4,1 кадра/с замість 4,8–5,3. У вузли ROS 2 ці кроки ще не підключено.
+   ```bash
+   python -m multimodal_transformer.training.drive_demo --drive <поїздка> --image-candidates --track
+   ```
+   Модель для сенсорів без каналу інтенсивності (macro F1 0,933 проти 0,938 з камерою, 0,801 проти
+   0,850 без неї) донавчається з `dataset_no_intensity.yaml` і `train_no_intensity.yaml`; на поїздці
+   її запускають з `--checkpoint runs/no_intensity/best.pth --intensity-scale 0`.
 9. **Реальний час (ROS 2)**:
    ```bash
    # поїздка KITTI raw: автомобіль їде сценою в RViz2 (TF world -> lidar з GPS/IMU)
@@ -145,7 +156,7 @@ pre-commit install          # black + flake8 перед кожним коміт�
 ## Тестування та стиль коду
 
 ```bash
-pytest                 # 57 тестів: проєкція, OBB, нормалізація, датасет, ROI, модель, ONNX, навчання, журнал
+pytest                 # 66 тестів: проєкція, OBB, нормалізація, датасет, ROI, кандидати за зображенням, трекер, модель, ONNX, навчання, журнал
 black --check src tests
 flake8 src tests
 ```

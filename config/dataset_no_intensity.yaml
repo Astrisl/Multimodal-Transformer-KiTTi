@@ -1,0 +1,29 @@
+# dataset_background.yaml without LiDAR intensity (column 3 is zeroed by the normaliser):
+# for depth sensors that give no reflectance, e.g. the iPad Pro LiDAR.
+
+# Root of the KITTI object dataset (contains training/). Set via environment variable
+# so machine-specific paths stay out of git:  export KITTI_ROOT=/data/kitti
+kitti_root: ${KITTI_ROOT}
+# Output of data_pipeline.build_dataset (images/, lidar/, index.csv).
+crops_dir: ${KITTI_ROOT}/crops
+
+# Project classes; the list index is the label id used by the model.
+class_names: [Car, Pedestrian, Cyclist, Background]
+# Original crops + candidates of the live ROI extractor (data_pipeline.mine_background).
+index_file: index_with_background.csv
+
+# KITTI type -> project class. Types not listed (Tram, Misc, DontCare) are skipped.
+class_map:
+  Car: Car
+  Van: Car
+  Truck: Car
+  Pedestrian: Pedestrian
+  Person_sitting: Pedestrian
+  Cyclist: Cyclist
+
+min_points: 5          # objects with fewer LiDAR points inside the OBB are skipped
+image_padding: 5       # context pixels around the projected 3D box
+image_size: 224        # visual encoder input (ResNet-18 -> 7x7 tokens)
+intensity_scale: 0.0   # intensity dropped
+val_ratio: 0.2         # fraction of *frames* held out for validation
+split_seed: 42
